@@ -112,7 +112,7 @@ public class Index {
                     }
 
                     statement.executeBatch();
-                    if(blockHeight <= 0) {
+                    if(blockHeight <= 0 && lastBlockIndexed < 0) {
                         log.info("Indexed " + transactions.size() + " mempool transactions");
                     } else {
                         log.info("Indexed " + transactions.size() + " transactions to block height " + blockHeight);
@@ -173,14 +173,15 @@ public class Index {
         }
     }
 
-    public List<TxEntry> getHistoryAsync(SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
+    public List<TxEntry> getHistoryAsync(SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight, boolean scanForChange, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
         ConcurrentLinkedQueue<TxEntry> queue = new ConcurrentLinkedQueue<>();
         AtomicLong rowsProcessedStart = new AtomicLong(0L);
 
         try {
             dbManager.executeRead(connection -> {
                 String sql = "SELECT txid, height FROM " + TWEAK_TABLE +
-                        " WHERE secp256k1_xonly_key_match(outputs, secp256k1_ec_pubkey_combine([?, secp256k1_ec_pubkey_create(secp256k1_tagged_sha256('BIP0352/SharedSecret', secp256k1_ec_pubkey_tweak_mul(tweak_key, ?) || int_to_big_endian(0)))]), [?])";
+                        " WHERE secp256k1_xonly_key_match(outputs, secp256k1_ec_pubkey_combine([?, secp256k1_ec_pubkey_create(secp256k1_tagged_sha256('BIP0352/SharedSecret', secp256k1_ec_pubkey_tweak_mul(tweak_key, ?) || int_to_big_endian(0)))]), " +
+                        (scanForChange ? "[?])" : "[])");
 
                 if(startHeight != null) {
                     sql += " AND height >= ?";
@@ -196,12 +197,14 @@ public class Index {
 
                     statement.setBytes(1, scanAddress.getSpendKey().getPubKey());
                     statement.setBytes(2, scanAddress.getScanKey().getPrivKeyBytes());
-                    statement.setBytes(3, scanAddress.getChangeTweakKey().getPubKey());
+                    if(scanForChange) {
+                        statement.setBytes(3, scanAddress.getChangeTweakKey().getPubKey());
+                    }
                     if(startHeight != null) {
-                        statement.setInt(4, startHeight);
+                        statement.setInt(scanForChange ? 4 : 3, startHeight);
                     }
                     if(endHeight != null) {
-                        statement.setInt(startHeight == null ? 4 : 5, endHeight);
+                        statement.setInt(scanForChange ? startHeight == null ? 4 : 5 : startHeight == null ? 3 : 4, endHeight);
                     }
                     statement.setFetchSize(1);
 
