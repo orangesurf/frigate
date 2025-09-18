@@ -4,6 +4,7 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.protocol.*;
 import com.sparrowwallet.drongo.silentpayments.SilentPaymentScanAddress;
+import com.sparrowwallet.drongo.silentpayments.SilentPaymentUtils;
 import com.sparrowwallet.drongo.wallet.BlockTransaction;
 import com.sparrowwallet.frigate.ConfigurationException;
 import com.sparrowwallet.frigate.Frigate;
@@ -114,7 +115,7 @@ public class Index {
                     statement.executeBatch();
                     if(blockHeight <= 0 && lastBlockIndexed < 0) {
                         log.info("Indexed " + transactions.size() + " mempool transactions");
-                    } else {
+                    } else if(blockHeight > 0) {
                         log.info("Indexed " + transactions.size() + " transactions to block height " + blockHeight);
                     }
 
@@ -180,8 +181,7 @@ public class Index {
         try {
             dbManager.executeRead(connection -> {
                 String sql = "SELECT txid, height FROM " + TWEAK_TABLE +
-                        " WHERE secp256k1_xonly_key_match(outputs, secp256k1_ec_pubkey_combine([?, secp256k1_ec_pubkey_create(secp256k1_tagged_sha256('BIP0352/SharedSecret', secp256k1_ec_pubkey_tweak_mul(tweak_key, ?) || int_to_big_endian(0)))]), " +
-                        (scanForChange ? "[?])" : "[])");
+                        " WHERE scan_silent_payments(outputs, [?, ?, tweak_key], " + (scanForChange ? "[?])" : "[])");
 
                 if(startHeight != null) {
                     sql += " AND height >= ?";
@@ -195,10 +195,10 @@ public class Index {
                         return false;
                     }
 
-                    statement.setBytes(1, scanAddress.getSpendKey().getPubKey());
-                    statement.setBytes(2, scanAddress.getScanKey().getPrivKeyBytes());
+                    statement.setBytes(1, scanAddress.getScanKey().getPrivKeyBytes());
+                    statement.setBytes(2, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
                     if(scanForChange) {
-                        statement.setBytes(3, scanAddress.getChangeTweakKey().getPubKey());
+                        statement.setBytes(3, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getChangeTweakKey()));
                     }
                     if(startHeight != null) {
                         statement.setInt(scanForChange ? 4 : 3, startHeight);
