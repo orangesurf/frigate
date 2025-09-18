@@ -2,6 +2,7 @@ package com.sparrowwallet.frigate.index;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.sparrowwallet.drongo.Utils;
+import com.sparrowwallet.drongo.crypto.ECKey;
 import com.sparrowwallet.drongo.protocol.*;
 import com.sparrowwallet.drongo.silentpayments.SilentPaymentScanAddress;
 import com.sparrowwallet.drongo.silentpayments.SilentPaymentUtils;
@@ -180,7 +181,7 @@ public class Index {
 
         try {
             dbManager.executeRead(connection -> {
-                String sql = "SELECT txid, height FROM " + TWEAK_TABLE +
+                String sql = "SELECT txid, tweak_key, height FROM " + TWEAK_TABLE +
                         " WHERE scan_silent_payments(outputs, [?, ?, tweak_key], " + (scanForChange ? "[?])" : "[])");
 
                 if(startHeight != null) {
@@ -256,8 +257,9 @@ public class Index {
                         ResultSet resultSet = statement.executeQuery();
                         while(resultSet.next()) {
                             byte[] txid = resultSet.getBytes(1);
-                            int height = resultSet.getInt(2);
-                            queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid)));
+                            byte[] tweak_key = compressRawKey(resultSet.getBytes(2));
+                            int height = resultSet.getInt(3);
+                            queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid), Utils.bytesToHex(tweak_key)));
                         }
                     }
                 }
@@ -305,5 +307,15 @@ public class Index {
             result = (result << 8) | (hash[i] & 0xFF);
         }
         return result;
+    }
+
+    public static byte[] compressRawKey(byte[] rawUncompressed) {
+        byte[] uncompressed = new byte[64];
+        System.arraycopy(rawUncompressed, 0, uncompressed, 32, 32);
+        System.arraycopy(rawUncompressed, 32, uncompressed, 0, 32);
+        uncompressed = Utils.reverseBytes(uncompressed);
+
+        ECKey ecKey = ECKey.fromPublicOnly(Utils.concat(new byte[] {0x04}, uncompressed));
+        return ecKey.getPubKey(true);
     }
 }
