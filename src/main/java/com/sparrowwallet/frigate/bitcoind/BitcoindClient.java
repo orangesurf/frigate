@@ -105,6 +105,7 @@ public class BitcoindClient {
         timer.schedule(new PollTask(), 5000, 5000);
 
         if(blockchainInfo.initialblockdownload() && networkInfo.networkactive()) {
+            log.info("Waiting for sync to complete...");
             syncingLock.lock();
             try {
                 syncing = true;

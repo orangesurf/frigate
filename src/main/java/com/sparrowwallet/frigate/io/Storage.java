@@ -23,32 +23,43 @@ public class Storage {
     public static final String FRIGATE_DIR = ".frigate";
     public static final String WINDOWS_FRIGATE_DIR = "Frigate";
 
+    public static final String SECP256K1_EXTENSION_FILENAME = "secp256k1.duckdb_extension";
+    public static final String CUDASP_EXTENSION_FILENAME = "cudasp.duckdb_extension";
+
     public static File getSecp256k1ExtensionFile() {
+        return getExtensionFile(SECP256K1_EXTENSION_FILENAME);
+    }
+
+    public static File getCudaspExtensionFile() {
+        return getExtensionFile(CUDASP_EXTENSION_FILENAME);
+    }
+
+    public static File getExtensionFile(String extensionFileName) {
         String resourcePath;
         String osName = System.getProperty("os.name");
         String osArch = System.getProperty("os.arch");
         if(osName.startsWith("Mac") && osArch.equals("aarch64")) {
-            resourcePath = "/native/macos/arm64/secp256k1.duckdb_extension";
+            resourcePath = "/native/macos/arm64/" + extensionFileName;
         } else if(osName.startsWith("Mac")) {
-            resourcePath = "/native/macos/amd64/secp256k1.duckdb_extension";
+            resourcePath = "/native/macos/amd64/" + extensionFileName;
         } else if(osName.startsWith("Windows")) {
-            resourcePath = "/native/windows/amd64/secp256k1.duckdb_extension";
+            resourcePath = "/native/windows/amd64/" + extensionFileName;
         } else if(osArch.equals("aarch64")) {
-            resourcePath = "/native/linux/arm64/secp256k1.duckdb_extension";
+            resourcePath = "/native/linux/arm64/" + extensionFileName;
         } else {
-            resourcePath = "/native/linux/amd64/secp256k1.duckdb_extension";
+            resourcePath = "/native/linux/amd64/" + extensionFileName;
         }
 
-        File extensionFile = new File(getFrigateDbDir(), "secp256k1.duckdb_extension");
+        File extensionFile = new File(getFrigateDbDir(), extensionFileName);
 
         try(InputStream is = Storage.class.getResourceAsStream(resourcePath)) {
             if(is == null) {
-                throw new IOException("Could not find secp256k1 extension for the current platform: " + osName + " " + osArch);
+                throw new IOException("Could not find " + extensionFileName + " for the current platform: " + osName + " " + osArch);
             }
 
             Files.copy(is, extensionFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         } catch(IOException e) {
-            log.error("Error loading secp256k1 extension", e);
+            log.error("Error loading " + extensionFileName, e);
         }
 
         return extensionFile;

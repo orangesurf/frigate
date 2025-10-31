@@ -4,10 +4,11 @@
  
 Frigate is an experimental Electrum Server testing Silent Payments scanning with ephemeral client keys.
 
-It has three goals:
+It has four goals:
 1. To provide a proof of concept implementation of the [Remote Scanner](https://github.com/silent-payments/BIP0352-index-server-specification/blob/main/README.md#remote-scanner-ephemeral) approach discussed in the BIP352 Silent Payments Index Server [Specification](https://github.com/silent-payments/BIP0352-index-server-specification/blob/main/README.md) (WIP).
 2. To propose Electrum RPC protocol methods to request and return Silent Payments information from a server.
 3. To demonstrate an efficient "in database" technique of scanning for Silent Payments transactions.
+4. _(New)_ To demonstrate the use of GPU computation to dramatically decrease scanning time.
 
 #### This is alpha software, and should not be used in production.
 
@@ -32,6 +33,10 @@ This is the [Remote Scanner](https://github.com/silent-payments/BIP0352-index-se
 It should be noted that both the scan private key and the spend public key must be provided to the server in this approach.
 While this does have a privacy implication, the keys are not stored and only held by the server ephemerally (in RAM) for duration of the client session.
 This is similar to the widely used public Electrum server approach, where the wallet addresses are shared ephemerally with a public server. 
+
+Finally, although this approach will prove to be satisfactory for single user instances, the computation required is still too onerous for a multi-user instance such as an Electrum public server.
+Payment networks are networks subject to Metcalfe's Law like any other, and Silent Payments is only likely to see widespread real world adoption with free-to-use public servers. 
+For this use case, a further step must be taken to leverage modern GPU computation to dramatically improve performance and allow many simultaneous scanning requests.
 
 ## Approach
 
@@ -84,10 +89,21 @@ In order to reduce serialisation costs, Frigate uses a function that performs th
 ```sql
 SELECT txid, tweak_key, height FROM tweak WHERE scan_silent_payments(outputs, [SCAN_PRIVATE_KEY, SPEND_PUBLIC_KEY, tweak_key], [CHANGE_TWEAK_KEY]);
 ```
-The change tweak is added to the computed P<sub>0</sub> and checked against the outputs for a match.
-If no match is found, the result of the addition is negated and checked again.
-
+The change tweak is added to the computed P<sub>0</sub> and checked again against the outputs for a match.
 A further optimization is made by passing in uncompressed 64 byte public keys in a little endian x,y format to avoid uncompressing the keys for each tweak. 
+A final optimization may be made by pre-computing the doubling multiples for each tweak key to aid in faster point multiplication, but this increases the database size significantly and has therefore not been attempted.
+
+Instead, a more scalable approach is to leverage modern GPU computation. 
+GPUs are particularly well suited to the task of repeating the same calculation on large datasets, and Frigate leverages this in a [second DuckDB custom extension](https://github.com/sparrowwallet/duckdb-cudasp-extension).
+This extension uses CUDA on NVidia GPUs to load large batches of rows from the database into GPU memory and then performs all the computation there, with the CPU only retrieving data and outputting results.
+This function is called as follows:
+```sql
+SELECT txid, tweak_key, height FROM cudasp_scan((SELECT txid, height, tweak_key, outputs FROM tweak), SCAN_PRIVATE_KEY, SPEND_PUBLIC_KEY, [CHANGE_TWEAK_KEY], batch_size := 300000);
+```
+For this function, all inputs are provided in little endian format, with the public keys again in little endian x,y format.
+This function will scale across all available GPUs in a multi-GPU setup. Only Linux x86_64 systems are supported at present.
+The fourth `batch_size` parameter is optional and may be used to change the size of the batches loaded into the GPU, which may be used to tweak performance on different GPUs.
+The default value is `300000` rows.
 
 ## Electrum protocol
 
@@ -209,7 +225,9 @@ sp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqjuexzk6murw56suy3e0rd2
 
 ## Performance
 
-The scanning query is essentially CPU bound, mostly around EC point multiplication.
+### CPU Performance
+
+With this approach the scanning query is essentially CPU bound, mostly around EC point multiplication.
 [DuckDB parallelizes](https://duckdb.org/docs/stable/guides/performance/how_to_tune_workloads#parallelism-multi-core-processing) the workload based on row groups, with each row group containing 122,880 rows.
 It will by default configure itself to use all the available cores on the server it is running.
 The behaviour can be configured in the Frigate configuration file (see `dbThreads`).
@@ -230,8 +248,26 @@ The following set of benchmarks was generated on a M1 Macbook Pro with 10 availa
 
 Higher performance on the longer periods is possible by increasing the number of CPUs.
 Multiple clients conducting simultaneous scans slows each scan linearly. 
-Further performance improvements (or handling additional clients) may be performed by scaling out across [multiple read-only replicas of the database](https://motherduck.com/docs/key-tasks/authenticating-and-connecting-to-motherduck/read-scaling/).
-It is also possible to consider hardware acceleration techniques such as [HSMs](https://docs.aws.amazon.com/cloudhsm/latest/userguide/performance.html), [cryptographic coprocessors](https://developer.arm.com/Processors/CryptoCell-310) or GPU acceleration.
+Further performance improvements to this approach may be achieved by scaling out across [multiple read-only replicas of the database](https://motherduck.com/docs/key-tasks/authenticating-and-connecting-to-motherduck/read-scaling/).
+
+### GPU Performance
+
+GPU performance is significantly higher. The following results were measured using the same database on a system with 2x NVidia RTX 5090 GPUs:
+
+|          | Blocks |   Start   | Transactions | Time      | Transactions/sec |
+|----------|--------|-----------|--------------|-----------|------------------|
+| 2 hours  | 12     |   911422  | 8961         | 53ms      | 169,075          |
+| 1 day    | 144    |   911290  | 149059       | 248ms     | 600,965          |
+| 1 week   | 1008   |   910426  | 1143906      | 575ms     | 1,989,401        |
+| 2 weeks  | 2016   |   909418  | 2349028      | 1s 37ms   | 2,265,266        |
+| 4 weeks  | 4032   |   907402  | 5002030      | 2s 275ms  | 2,198,706        |
+| 8 weeks  | 8064   |   903370  | 9441899      | 3s 636ms  | 2,596,475        |
+| 16 weeks | 16128  |   895306  | 15910877     | 7s 551ms  | 2,107,461        |
+| 32 weeks | 32256  |   879178  | 32666940     | 12s 457ms | 2,622,216        |
+| 64 weeks | 64512  |   846922  | 77095632     | 26s 590ms | 2,899,422        |
+
+The GPU computation is so rapid that the bulk of the time is now spent retrieving the data from the database and performing GPU setup, rather than the actual EC operations. 
+This approach is performant enough that a multi-user instance is now possible.
 
 ## Configuration
 
@@ -247,7 +283,10 @@ An example configuration looks as follows
   "coreAuth": "bitcoin:password",
   "startIndexing": true,
   "indexStartHeight": 0,
-  "scriptPubKeyCacheSize": 10000000
+  "scriptPubKeyCacheSize": 10000000,
+  "scanForChange": true,
+  "useCuda": false,
+  "cudaBatchSize": 300000
 }
 ```
 
@@ -271,6 +310,19 @@ To reduce CPU load while scanning, add an entry to reduce the number of cores ma
   "dbThreads": 2
 }
 ```
+
+GPU computation should only be enabled on Linux x86_64 systems with a minimum CUDA version of 12.8
+```json
+{
+  "useCuda": true
+}
+```
+
+The extension has been compiled for the following architectures:
+- 80 - Ampere (A100)
+- 86 - Ampere (RTX 30xx series)
+- 89 - Ada Lovelace (RTX 40xx/50xx series)
+- 90 - Hopper (H100/H200)
 
 ## Usage
 

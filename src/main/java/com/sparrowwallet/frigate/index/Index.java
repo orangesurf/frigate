@@ -35,9 +35,13 @@ public class Index {
 
     private final DbManager dbManager;
     private int lastBlockIndexed = -1;
+    private final boolean useCuda;
+    private final int cudaBatchSize;
 
-    public Index(int startHeight, boolean inMemory) {
+    public Index(int startHeight, boolean inMemory, boolean useCuda, int cudaBatchSize) {
         lastBlockIndexed = Math.max(lastBlockIndexed, startHeight - 1);
+        this.useCuda = useCuda;
+        this.cudaBatchSize = cudaBatchSize;
 
         if(inMemory) {
             dbManager = new MemoryDbManager();
@@ -45,12 +49,12 @@ public class Index {
             String dbUrl = Config.get().getDbUrl();
             List<String> readDbUrls = Config.get().getReadDbUrls();
             if(dbUrl != null && readDbUrls != null && !readDbUrls.isEmpty()) {
-                dbManager = new ScalingDbManager(dbUrl, readDbUrls);
+                dbManager = new ScalingDbManager(dbUrl, readDbUrls, useCuda);
             } else if(dbUrl == null) {
                 File dbFile = new File(Storage.getFrigateDbDir(), DEFAULT_DB_FILENAME);
-                dbManager = new SingleDbManager(DbManager.DB_PREFIX + dbFile.getAbsolutePath());
+                dbManager = new SingleDbManager(DbManager.DB_PREFIX + dbFile.getAbsolutePath(), useCuda);
             } else {
-                dbManager = new SingleDbManager(dbUrl);
+                dbManager = new SingleDbManager(dbUrl, useCuda);
             }
         }
 
@@ -181,33 +185,14 @@ public class Index {
 
         try {
             dbManager.executeRead(connection -> {
-                String sql = "SELECT txid, tweak_key, height FROM " + TWEAK_TABLE +
-                        " WHERE scan_silent_payments(outputs, [?, ?, tweak_key], " + (scanForChange ? "[?])" : "[])");
-
-                if(startHeight != null) {
-                    sql += " AND height >= ?";
-                }
-                if(endHeight != null) {
-                    sql += " AND height <= ?";
-                }
+                String sql = getSql(startHeight, endHeight, scanForChange);
 
                 try(DuckDBPreparedStatement statement = connection.prepareStatement(sql).unwrap(DuckDBPreparedStatement.class)) {
                     if(isUnsubscribed(scanAddress, subscriptionStatusRef)) {
                         return false;
                     }
 
-                    statement.setBytes(1, scanAddress.getScanKey().getPrivKeyBytes());
-                    statement.setBytes(2, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
-                    if(scanForChange) {
-                        statement.setBytes(3, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getChangeTweakKey()));
-                    }
-                    if(startHeight != null) {
-                        statement.setInt(scanForChange ? 4 : 3, startHeight);
-                    }
-                    if(endHeight != null) {
-                        statement.setInt(scanForChange ? startHeight == null ? 4 : 5 : startHeight == null ? 3 : 4, endHeight);
-                    }
-                    statement.setFetchSize(1);
+                    bindParameters(statement, scanAddress, startHeight, endHeight, scanForChange);
 
                     try(ScheduledThreadPoolExecutor queryProgressExecutor = new ScheduledThreadPoolExecutor(1, r -> {
                         ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("IndexQueryProgress-%d").build();
@@ -289,6 +274,73 @@ public class Index {
         }
 
         return history;
+    }
+
+    private String getSql(Integer startHeight, Integer endHeight, boolean scanForChange) {
+        if(useCuda) {
+            String sql = "SELECT txid, tweak_key, height FROM cudasp_scan((SELECT txid, height, tweak_key, outputs FROM " + TWEAK_TABLE;
+
+            if(startHeight != null || endHeight != null) {
+                sql += " WHERE ";
+            }
+
+            if(startHeight != null) {
+                sql += "height >= ?";
+                if(endHeight != null) {
+                    sql += " AND ";
+                }
+            }
+
+            if(endHeight != null) {
+                sql += "height <= ?";
+            }
+
+            sql += "), ?, ?, " + (scanForChange ? "[?]" : "[]") + ", batch_size := ?)";
+
+            return sql;
+        } else {
+            String sql = "SELECT txid, tweak_key, height FROM " + TWEAK_TABLE +
+                    " WHERE scan_silent_payments(outputs, [?, ?, tweak_key], " + (scanForChange ? "[?])" : "[])");
+
+            if(startHeight != null) {
+                sql += " AND height >= ?";
+            }
+            if(endHeight != null) {
+                sql += " AND height <= ?";
+            }
+
+            return sql;
+        }
+    }
+
+    private void bindParameters(DuckDBPreparedStatement statement, SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, boolean scanForChange) throws SQLException {
+        int index = 1;
+        if(useCuda) {
+            if(startHeight != null) {
+                statement.setInt(index++, startHeight);
+            }
+            if(endHeight != null) {
+                statement.setInt(index++, endHeight);
+            }
+            statement.setBytes(index++, Utils.reverseBytes(scanAddress.getScanKey().getPrivKeyBytes()));
+            statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
+            if(scanForChange) {
+                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getChangeTweakKey()));
+            }
+            statement.setInt(index, cudaBatchSize);
+        } else {
+            statement.setBytes(index++, scanAddress.getScanKey().getPrivKeyBytes());
+            statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
+            if(scanForChange) {
+                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getChangeTweakKey()));
+            }
+            if(startHeight != null) {
+                statement.setInt(index++, startHeight);
+            }
+            if(endHeight != null) {
+                statement.setInt(index, endHeight);
+            }
+        }
     }
 
     private static boolean isUnsubscribed(SilentPaymentScanAddress scanAddress, WeakReference<SubscriptionStatus> subscriptionStatusRef) {

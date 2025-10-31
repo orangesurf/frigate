@@ -24,6 +24,8 @@ public class Config {
     private String dbUrl;
     private List<String> readDbUrls;
     private boolean scanForChange = true;
+    private boolean useCuda;
+    private int cudaBatchSize = 300000;
 
     private static Config INSTANCE;
 
@@ -165,6 +167,24 @@ public class Config {
 
     public void setScanForChange(boolean scanForChange) {
         this.scanForChange = scanForChange;
+        flush();
+    }
+
+    public boolean isUseCuda() {
+        return useCuda;
+    }
+
+    public void setUseCuda(boolean useCuda) {
+        this.useCuda = useCuda;
+        flush();
+    }
+
+    public int getCudaBatchSize() {
+        return cudaBatchSize;
+    }
+
+    public void setCudaBatchSize(int cudaBatchSize) {
+        this.cudaBatchSize = cudaBatchSize;
         flush();
     }
 
