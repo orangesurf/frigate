@@ -14,6 +14,10 @@ repositories {
     mavenCentral()
 }
 
+tasks.withType(AbstractArchiveTask).configureEach {
+    useFileSystemPermissions()
+}
+
 dependencies {
     implementation(project(':drongo'))
     implementation('org.duckdb:duckdb_jdbc:1.4.1.0')
