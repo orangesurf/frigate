@@ -14,6 +14,8 @@ import com.sparrowwallet.frigate.electrum.SilentPaymentsNotification;
 import com.sparrowwallet.frigate.electrum.SilentPaymentsSubscription;
 import com.sparrowwallet.frigate.io.Config;
 import com.sparrowwallet.frigate.io.Storage;
+import org.duckdb.DuckDBAppender;
+import org.duckdb.DuckDBConnection;
 import org.duckdb.DuckDBPreparedStatement;
 import org.duckdb.QueryProgress;
 import org.slf4j.Logger;
@@ -95,13 +97,15 @@ public class Index {
         int fromBlockHeight = lastBlockIndexed;
         try {
             lastBlockIndexed = dbManager.executeWrite(connection -> {
-                try(PreparedStatement statement = connection.prepareStatement("INSERT INTO " + TWEAK_TABLE + " VALUES (?, ?, ?, ?)")) {
+                DuckDBConnection duckDBConnection = (DuckDBConnection)connection;
+                try(DuckDBAppender appender = duckDBConnection.createAppender(DuckDBConnection.DEFAULT_SCHEMA, TWEAK_TABLE)) {
                     int blockHeight = -1;
 
                     for(BlockTransaction blkTx : transactions.keySet()) {
-                        statement.setBytes(1, blkTx.getTransaction().getTxId().getBytes());
-                        statement.setInt(2, blkTx.getHeight());
-                        statement.setObject(3, transactions.get(blkTx));
+                        appender.beginRow();
+                        appender.append(blkTx.getTransaction().getTxId().getBytes());
+                        appender.append(blkTx.getHeight());
+                        appender.append(transactions.get(blkTx));
 
                         List<TransactionOutput> outputs = blkTx.getTransaction().getOutputs();
                         List<Long> hashPrefixes = new ArrayList<>();
@@ -111,13 +115,12 @@ public class Index {
                                 hashPrefixes.add(hashPrefix);
                             }
                         }
-                        statement.setArray(4, connection.createArrayOf("BIGINT", hashPrefixes.toArray()));
-                        statement.addBatch();
+                        appender.append(hashPrefixes.stream().mapToLong(Long::longValue).toArray());
+                        appender.endRow();
 
                         blockHeight = Math.max(blockHeight, blkTx.getHeight());
                     }
 
-                    statement.executeBatch();
                     if(blockHeight <= 0 && lastBlockIndexed < 0) {
                         log.info("Indexed " + transactions.size() + " mempool transactions");
                     } else if(blockHeight > 0) {

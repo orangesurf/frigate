@@ -268,6 +268,7 @@ GPU performance is significantly higher. The following results were measured usi
 
 The GPU computation is so rapid that the bulk of the time is now spent retrieving the data from the database and performing GPU setup, rather than the actual EC operations. 
 This approach is performant enough that a multi-user instance is now possible.
+As all EC computation is offloaded to the GPU, CPU overhead is low and normal Electrum server RPC calls can be handled simultaneously without any performance degradation.
 
 ## Configuration
 
