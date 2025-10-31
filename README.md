@@ -287,7 +287,8 @@ An example configuration looks as follows
   "scriptPubKeyCacheSize": 10000000,
   "scanForChange": true,
   "useCuda": false,
-  "cudaBatchSize": 300000
+  "cudaBatchSize": 300000,
+  "backendElectrumServer": "tcp://localhost:50001"
 }
 ```
 
@@ -318,12 +319,14 @@ GPU computation should only be enabled on Linux x86_64 systems with a minimum CU
   "useCuda": true
 }
 ```
-
 The extension has been compiled for the following architectures:
 - 80 - Ampere (A100)
 - 86 - Ampere (RTX 30xx series)
 - 89 - Ada Lovelace (RTX 40xx/50xx series)
 - 90 - Hopper (H100/H200)
+
+Frigate only implements some Electrum server RPCs, and contains an experimental feature in which it proxies unsupported requests to another Electrum server.
+This server can be configured with `backendElectrumServer`, and is intended to be used to point to a server running on the same host.
 
 ## Usage
 

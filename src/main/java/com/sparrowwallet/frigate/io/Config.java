@@ -26,6 +26,7 @@ public class Config {
     private boolean scanForChange = true;
     private boolean useCuda;
     private int cudaBatchSize = 300000;
+    private Server backendElectrumServer;
 
     private static Config INSTANCE;
 
@@ -185,6 +186,15 @@ public class Config {
 
     public void setCudaBatchSize(int cudaBatchSize) {
         this.cudaBatchSize = cudaBatchSize;
+        flush();
+    }
+
+    public Server getBackendElectrumServer() {
+        return backendElectrumServer;
+    }
+
+    public void setBackendElectrumServer(Server backendElectrumServer) {
+        this.backendElectrumServer = backendElectrumServer;
         flush();
     }
 

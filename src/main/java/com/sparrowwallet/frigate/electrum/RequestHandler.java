@@ -10,6 +10,7 @@ import com.sparrowwallet.frigate.SubscriptionStatus;
 import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
 import com.sparrowwallet.frigate.bitcoind.BlockReorgEvent;
 import com.sparrowwallet.frigate.index.*;
+import com.sparrowwallet.frigate.io.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,12 +25,14 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
-public class RequestHandler implements Runnable, SubscriptionStatus {
+public class RequestHandler implements Runnable, SubscriptionStatus, Thread.UncaughtExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(RequestHandler.class);
     private final Socket clientSocket;
     private final ElectrumServerService electrumServerService;
     private final JsonRpcServer rpcServer = new JsonRpcServer();
     private final AtomicBoolean disconnected = new AtomicBoolean(false);
+    private final ElectrumTransport backendTransport;
+    private final Thread reader;
 
     private boolean connected;
     private boolean headersSubscribed;
@@ -38,7 +41,16 @@ public class RequestHandler implements Runnable, SubscriptionStatus {
 
     public RequestHandler(Socket clientSocket, BitcoindClient bitcoindClient, IndexQuerier indexQuerier) {
         this.clientSocket = clientSocket;
-        this.electrumServerService = new ElectrumServerService(bitcoindClient, this, indexQuerier);
+        if(Config.get().getBackendElectrumServer() != null) {
+            this.backendTransport = new ElectrumTransport(Config.get().getBackendElectrumServer().getHostAndPort(), new BackendSubscriptionService());
+            this.reader = new Thread(new ReadRunnable(backendTransport), "BackendServerReadThread");
+            reader.setDaemon(true);
+            reader.setUncaughtExceptionHandler(this);
+        } else {
+            this.backendTransport = null;
+            this.reader = null;
+        }
+        this.electrumServerService = new ElectrumServerService(bitcoindClient, this, indexQuerier, backendTransport);
     }
 
     public void run() {
@@ -46,6 +58,8 @@ public class RequestHandler implements Runnable, SubscriptionStatus {
         this.connected = true;
 
         try {
+            connectBackendTransport();
+
             InputStream input  = clientSocket.getInputStream();
             BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
 
@@ -65,9 +79,34 @@ public class RequestHandler implements Runnable, SubscriptionStatus {
         } catch(IOException e) {
             log.error("Could not communicate with client socket", e);
         } finally {
+            closeBackendTransport();
             this.connected = false;
             this.disconnected.set(true);
             Frigate.getEventBus().unregister(this);
+        }
+    }
+
+    private void connectBackendTransport() {
+        if(backendTransport != null) {
+            backendTransport.connect();
+        }
+
+        if(reader != null && !reader.isAlive()) {
+            reader.start();
+        }
+    }
+
+    private void closeBackendTransport() {
+        if(backendTransport != null) {
+            try {
+                backendTransport.close();
+            } catch(IOException e) {
+                log.error("Error closing transport", e);
+            }
+        }
+
+        if(reader != null && reader.isAlive()) {
+            reader.interrupt();
         }
     }
 
@@ -87,6 +126,10 @@ public class RequestHandler implements Runnable, SubscriptionStatus {
 
     public void subscribeScriptHash(String scriptHash) {
         scriptHashesSubscribed.add(scriptHash);
+    }
+
+    public void unsubscribeScriptHash(String scriptHash) {
+        scriptHashesSubscribed.remove(scriptHash);
     }
 
     @Override
@@ -171,6 +214,32 @@ public class RequestHandler implements Runnable, SubscriptionStatus {
     public void blockReorgEvent(BlockReorgEvent event) {
         for(SilentPaymentAddressSubscription subscription : silentPaymentsAddressesSubscribed.values()) {
             subscription.setHighestBlockHeight(event.startHeight() - 1);
+        }
+    }
+
+    @Override
+    public void uncaughtException(Thread t, Throwable e) {
+        log.error("Uncaught exception in thread " + t.getName(), e);
+    }
+
+    public static class ReadRunnable implements Runnable {
+        private final ElectrumTransport electrumTransport;
+
+        public ReadRunnable(ElectrumTransport electrumTransport) {
+            this.electrumTransport = electrumTransport;
+        }
+
+        @Override
+        public void run() {
+            try {
+                electrumTransport.readInputLoop();
+
+                if(electrumTransport.getLastException() != null && !electrumTransport.isClosed()) {
+                    log.error("Connection to Electrum server lost", electrumTransport.getLastException());
+                }
+            } catch(Exception e) {
+                log.debug("Read thread terminated", e);
+            }
         }
     }
 }

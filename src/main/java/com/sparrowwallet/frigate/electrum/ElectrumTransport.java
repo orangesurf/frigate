@@ -1,4 +1,4 @@
-package com.sparrowwallet.frigate.cli;
+package com.sparrowwallet.frigate.electrum;
 
 import com.github.arteam.simplejsonrpc.client.Transport;
 import com.github.arteam.simplejsonrpc.server.JsonRpcServer;
@@ -42,10 +42,14 @@ public class ElectrumTransport implements Transport, Closeable {
     private final Gson gson = new Gson();
 
     private final JsonRpcServer jsonRpcServer = new JsonRpcServer();
-    private final SubscriptionService subscriptionService = new SubscriptionService();
+    private final Object subscriptionService;
 
-    public ElectrumTransport(HostAndPort electrumServer) {
+    public ElectrumTransport(HostAndPort electrumServer, Object subscriptionService) {
         this.electrumServer = electrumServer;
+        this.subscriptionService = subscriptionService;
+    }
+
+    public void connect() {
         try {
             String host = electrumServer.getHost();
             int port = electrumServer.hasPort() ? electrumServer.getPort() : DEFAULT_PORT;
@@ -232,6 +236,10 @@ public class ElectrumTransport implements Transport, Closeable {
             socket.close();
         }
         closed = true;
+    }
+
+    public boolean isClosed() {
+        return closed;
     }
 
     public static class Rpc {

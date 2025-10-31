@@ -7,6 +7,7 @@ import com.google.common.net.HostAndPort;
 import com.sparrowwallet.drongo.Drongo;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.frigate.Frigate;
+import com.sparrowwallet.frigate.electrum.ElectrumTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,7 +71,8 @@ public class FrigateCli implements Thread.UncaughtExceptionHandler {
     }
 
     public void connect() {
-        transport = new ElectrumTransport(server);
+        transport = new ElectrumTransport(server, new SubscriptionService());
+        transport.connect();
         reader = new Thread(new ReadRunnable(), "ElectrumServerReadThread");
         reader.setDaemon(true);
         reader.setUncaughtExceptionHandler(FrigateCli.this);

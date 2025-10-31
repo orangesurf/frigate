@@ -1,5 +1,6 @@
 package com.sparrowwallet.frigate.electrum;
 
+import com.github.arteam.simplejsonrpc.client.JsonRpcClient;
 import com.github.arteam.simplejsonrpc.client.exception.JsonRpcException;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcMethod;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcOptional;
@@ -32,11 +33,19 @@ public class ElectrumServerService {
     private final BitcoindClient bitcoindClient;
     private final RequestHandler requestHandler;
     private final IndexQuerier indexQuerier;
+    private final ElectrumBackendService electrumBackendService;
 
-    public ElectrumServerService(BitcoindClient bitcoindClient, RequestHandler requestHandler, IndexQuerier indexQuerier) {
+    public ElectrumServerService(BitcoindClient bitcoindClient, RequestHandler requestHandler, IndexQuerier indexQuerier, ElectrumTransport backendTransport) {
         this.bitcoindClient = bitcoindClient;
         this.requestHandler = requestHandler;
         this.indexQuerier = indexQuerier;
+
+        if(backendTransport != null) {
+            JsonRpcClient jsonRpcClient = new JsonRpcClient(backendTransport);
+            this.electrumBackendService = jsonRpcClient.onDemand(ElectrumBackendService.class);
+        } else {
+            electrumBackendService = null;
+        }
     }
 
     public IndexQuerier getIndexQuerier() {
@@ -44,8 +53,14 @@ public class ElectrumServerService {
     }
 
     @JsonRpcMethod("server.version")
-    public List<String> getServerVersion(@JsonRpcParam("client_name") String clientName, @JsonRpcParam("protocol_version") String[] protocolVersion) throws UnsupportedVersionException {
-        String version = protocolVersion.length > 1 ? protocolVersion[1] : protocolVersion[0];
+    public List<String> getServerVersion(@JsonRpcParam("client_name") String clientName, @JsonRpcParam("protocol_version") Object protocolVersion) throws UnsupportedVersionException {
+        String version = switch(protocolVersion) {
+            case String s -> s;
+            case List<?> versions -> versions.size() > 1 ? versions.get(1).toString() : versions.get(0).toString();
+            case String[] versions -> versions.length > 1 ? versions[1] : versions[0];
+            case null, default -> throw new IllegalArgumentException("Invalid protocol_version type: " + protocolVersion);
+        };
+
         Version clientVersion = new Version(version);
         if(clientVersion.compareTo(VERSION) < 0) {
             throw new UnsupportedVersionException(version);
@@ -75,7 +90,11 @@ public class ElectrumServerService {
 
     @JsonRpcMethod("mempool.get_fee_histogram")
     public List<List<Number>> getFeeHistogram() {
-        throw new UnsupportedOperationException("Not yet implemented");
+        if(electrumBackendService != null) {
+            return electrumBackendService.getFeeHistogram();
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use mempool.get_fee_histogram");
     }
 
     @JsonRpcMethod("blockchain.relayfee")
@@ -105,17 +124,33 @@ public class ElectrumServerService {
 
     @JsonRpcMethod("blockchain.scripthash.subscribe")
     public String subscribeScriptHash(@JsonRpcParam("scripthash") String scriptHash) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        if(electrumBackendService != null) {
+            String status = electrumBackendService.subscribeScriptHash(scriptHash);
+            requestHandler.subscribeScriptHash(scriptHash);
+            return status;
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.subscribe");
     }
 
     @JsonRpcMethod("blockchain.scripthash.unsubscribe")
     public String unsubscribeScriptHash(@JsonRpcParam("scripthash") String scriptHash) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        if(electrumBackendService != null) {
+            String status = electrumBackendService.unsubscribeScriptHash(scriptHash);
+            requestHandler.unsubscribeScriptHash(scriptHash);
+            return status;
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.unsubscribe");
     }
 
     @JsonRpcMethod("blockchain.scripthash.get_history")
     public Collection<TxEntry> getHistory(@JsonRpcParam("scripthash") String scriptHash) {
-        throw new UnsupportedOperationException("Not yet implemented");
+        if(electrumBackendService != null) {
+            return electrumBackendService.getHistory(scriptHash);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.get_history");
     }
 
     @JsonRpcMethod("blockchain.block.header")
