@@ -298,7 +298,7 @@ public class Index {
                 sql += "height <= ?";
             }
 
-            sql += "), ?, ?, " + (scanForChange ? "[?]" : "[]") + ", batch_size := ?)";
+            sql += "), ?, ?, " + (scanForChange ? "[?]" : "CAST([] AS BLOB[])") + ", batch_size := ?) ORDER BY height";
 
             return sql;
         } else {
