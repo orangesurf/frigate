@@ -11,6 +11,7 @@ import com.sparrowwallet.frigate.electrum.SilentPaymentsSubscription;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -20,12 +21,10 @@ public class IndexQuerier {
 
     private final Index blocksIndex;
     private final Index mempoolIndex;
-    private final boolean scanForChange;
 
-    public IndexQuerier(Index blocksIndex, Index mempoolIndex, boolean scanForChange) {
+    public IndexQuerier(Index blocksIndex, Index mempoolIndex) {
         this.blocksIndex = blocksIndex;
         this.mempoolIndex = mempoolIndex;
-        this.scanForChange = scanForChange;
     }
 
     private final ExecutorService queryPool = Executors.newFixedThreadPool(10, r -> {
@@ -35,14 +34,14 @@ public class IndexQuerier {
         return t;
     });
 
-    public void startHistoryScan(SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
-        startHistoryScan(scanAddress, startHeight, endHeight, subscriptionStatusRef, true);
+    public void startHistoryScan(SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, Set<Integer> labelSet, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
+        startHistoryScan(scanAddress, startHeight, endHeight, labelSet, subscriptionStatusRef, true);
     }
 
-    public void startHistoryScan(SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, WeakReference<SubscriptionStatus> subscriptionStatusRef, boolean postIfEmpty) {
+    public void startHistoryScan(SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, Set<Integer> labelSet, WeakReference<SubscriptionStatus> subscriptionStatusRef, boolean postIfEmpty) {
         queryPool.submit(() -> {
-            SilentPaymentsSubscription subscription = new SilentPaymentsSubscription(scanAddress.toString(), startHeight == null ? 0 : startHeight);
-            List<TxEntry> history = blocksIndex.getHistoryAsync(scanAddress, subscription, startHeight, endHeight, scanForChange, subscriptionStatusRef);
+            SilentPaymentsSubscription subscription = new SilentPaymentsSubscription(scanAddress.toString(), labelSet.toArray(new Integer[0]), startHeight == null ? 0 : startHeight);
+            List<TxEntry> history = blocksIndex.getHistoryAsync(scanAddress, subscription, startHeight, endHeight, subscriptionStatusRef);
             List<TxEntry> mempoolHistory = getMempoolHistory(scanAddress, subscriptionStatusRef, subscription);
             history.addAll(mempoolHistory);
 
@@ -52,9 +51,9 @@ public class IndexQuerier {
         });
     }
 
-    public void startMempoolScan(SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
+    public void startMempoolScan(SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, Set<Integer> labelSet, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
         queryPool.submit(() -> {
-            SilentPaymentsSubscription subscription = new SilentPaymentsSubscription(scanAddress.toString(), startHeight == null ? 0 : startHeight);
+            SilentPaymentsSubscription subscription = new SilentPaymentsSubscription(scanAddress.toString(), labelSet.toArray(new Integer[0]), startHeight == null ? 0 : startHeight);
             List<TxEntry> mempoolHistory = getMempoolHistory(scanAddress, subscriptionStatusRef, subscription);
 
             if(!mempoolHistory.isEmpty()) {
@@ -64,7 +63,7 @@ public class IndexQuerier {
     }
 
     private List<TxEntry> getMempoolHistory(SilentPaymentScanAddress scanAddress, WeakReference<SubscriptionStatus> subscriptionStatusRef, SilentPaymentsSubscription subscription) {
-        List<TxEntry> mempoolHistory = mempoolIndex.getHistoryAsync(scanAddress, subscription, null, null, scanForChange, subscriptionStatusRef);
+        List<TxEntry> mempoolHistory = mempoolIndex.getHistoryAsync(scanAddress, subscription, null, null, subscriptionStatusRef);
         SubscriptionStatus subscriptionStatus = subscriptionStatusRef.get();
         if(subscriptionStatus != null && subscriptionStatus.getSilentPaymentsMempoolTxids(scanAddress.toString()) != null) {
             mempoolHistory.removeIf(txEntry -> subscriptionStatus.getSilentPaymentsMempoolTxids(scanAddress.toString()).contains(Sha256Hash.wrap(txEntry.tx_hash)));

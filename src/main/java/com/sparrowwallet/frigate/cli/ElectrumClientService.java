@@ -6,13 +6,10 @@ import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcMethod;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcOptional;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcParam;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcService;
-import com.sparrowwallet.frigate.index.TxEntry;
-
-import java.util.Collection;
 
 @JsonRpcService
 @JsonRpcParams(ParamsType.ARRAY)
 public interface ElectrumClientService {
     @JsonRpcMethod("blockchain.silentpayments.subscribe")
-    String subscribeSilentPayments(@JsonRpcParam("scan_private_key") String scanPrivateKey, @JsonRpcParam("spend_public_key") String spendPublicKey, @JsonRpcParam("start") @JsonRpcOptional Long start);
+    String subscribeSilentPayments(@JsonRpcParam("scan_private_key") String scanPrivateKey, @JsonRpcParam("spend_public_key") String spendPublicKey, @JsonRpcParam("start") @JsonRpcOptional Long start, @JsonRpcParam("labels") @JsonRpcOptional Integer[] labels);
 }

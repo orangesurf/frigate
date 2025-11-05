@@ -233,12 +233,13 @@ public class ElectrumServerService {
     }
 
     @JsonRpcMethod("blockchain.silentpayments.subscribe")
-    public String subscribeSilentPayments(@JsonRpcParam("scan_private_key") String scanPrivateKey, @JsonRpcParam("spend_public_key") String spendPublicKey, @JsonRpcParam("start") @JsonRpcOptional Long start) {
+    public String subscribeSilentPayments(@JsonRpcParam("scan_private_key") String scanPrivateKey, @JsonRpcParam("spend_public_key") String spendPublicKey, @JsonRpcParam("start") @JsonRpcOptional Long start, @JsonRpcParam("labels") @JsonRpcOptional Integer[] labels) {
         SilentPaymentScanAddress silentPaymentScanAddress = getSilentPaymentScanAddress(scanPrivateKey, spendPublicKey);
-        requestHandler.subscribeSilentPaymentsAddress(silentPaymentScanAddress);
+        Set<Integer> labelSet = getLabels(labels);
+        requestHandler.subscribeSilentPaymentsAddress(silentPaymentScanAddress, labelSet);
 
         int startHeight = getStartHeight(start);
-        indexQuerier.startHistoryScan(silentPaymentScanAddress, startHeight, null, new WeakReference<>(requestHandler));
+        indexQuerier.startHistoryScan(silentPaymentScanAddress, startHeight, null, labelSet, new WeakReference<>(requestHandler));
 
         return silentPaymentScanAddress.getAddress();
     }
@@ -267,5 +268,14 @@ public class ElectrumServerService {
             }
         }
         return startHeight;
+    }
+
+    private Set<Integer> getLabels(Integer[] labels) {
+        Set<Integer> labelSet = new HashSet<>();
+        labelSet.add(0);
+        if(labels != null) {
+            labelSet.addAll(Arrays.asList(labels));
+        }
+        return Collections.unmodifiableSet(labelSet);
     }
 }

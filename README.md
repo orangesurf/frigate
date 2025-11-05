@@ -118,12 +118,13 @@ Frigate proposes the following Electrum JSON-RPC methods:
 
 **Signature**
 ```
-blockchain.silentpayments.subscribe(scan_private_key, spend_public_key, start)
+blockchain.silentpayments.subscribe(scan_private_key, spend_public_key, start, labels)
 ```
 
 - _scan_private_key_: A 64 character string containing the hex of the scan private key.
 - _spend_public_key_: A 66 character string containing the hex of the spend public key.
 - _start_: (Optional) Block height or timestamp to start scanning from. Values above 500,000,000 are treated as seconds from the start of the epoch.
+- _labels_: (Optional) An array of positive integers specifying additional silent payment labels to scan for. Change (`m = 0`) is always included regardless.
 
 **Result**
 
@@ -151,6 +152,7 @@ A dictionary with the following key/value pairs:
 
 1. A `subscription` JSON object literal containing details of the current subscription:
 - _address_: The silent payment address that has been subscribed to.
+- _labels_: An array of the labels that are subscribed to (must include `0`).
 - _start_height_: The block height from which the subscription scan was started.
 
 2. A `progress` key/value pair indicating the progress of a historical scan:
@@ -167,6 +169,7 @@ A dictionary with the following key/value pairs:
 {
   "subscription": {
     "address": "sp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqjuexzk6murw56suy3e0rd2cgqvycxttddwsvgxe2usfpxumr70xc9pkqwv",
+    "labels": [0],
     "start_height": 882000
   },
   "progress": 1.0,
@@ -285,7 +288,6 @@ An example configuration looks as follows
   "startIndexing": true,
   "indexStartHeight": 0,
   "scriptPubKeyCacheSize": 10000000,
-  "scanForChange": true,
   "useCuda": false,
   "cudaBatchSize": 300000,
   "backendElectrumServer": "tcp://localhost:50001"

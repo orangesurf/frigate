@@ -137,8 +137,8 @@ public class RequestHandler implements Runnable, SubscriptionStatus, Thread.Unca
         return scriptHashesSubscribed.contains(scriptHash);
     }
 
-    public void subscribeSilentPaymentsAddress(SilentPaymentScanAddress silentPaymentsScanAddress) {
-        silentPaymentsAddressesSubscribed.put(silentPaymentsScanAddress.toString(), new SilentPaymentAddressSubscription(silentPaymentsScanAddress));
+    public void subscribeSilentPaymentsAddress(SilentPaymentScanAddress silentPaymentsScanAddress, Set<Integer> labelSet) {
+        silentPaymentsAddressesSubscribed.put(silentPaymentsScanAddress.toString(), new SilentPaymentAddressSubscription(silentPaymentsScanAddress, labelSet));
     }
 
     public void unsubscribeSilentPaymentsAddress(SilentPaymentScanAddress silentPaymentsScanAddress) {
@@ -191,7 +191,7 @@ public class RequestHandler implements Runnable, SubscriptionStatus, Thread.Unca
     public void silentPaymentsBlocksIndexUpdate(SilentPaymentsBlocksIndexUpdate update) {
         for(SilentPaymentAddressSubscription subscription : silentPaymentsAddressesSubscribed.values()) {
             if(update.fromBlockHeight() > subscription.getHighestBlockHeight()) {
-                electrumServerService.getIndexQuerier().startHistoryScan(subscription.getAddress(), update.fromBlockHeight(), null, new WeakReference<>(this), false);
+                electrumServerService.getIndexQuerier().startHistoryScan(subscription.getAddress(), update.fromBlockHeight(), null, subscription.getLabels(), new WeakReference<>(this), false);
             }
         }
     }
@@ -199,7 +199,7 @@ public class RequestHandler implements Runnable, SubscriptionStatus, Thread.Unca
     @Subscribe
     public void silentPaymentsMempoolIndexAdded(SilentPaymentsMempoolIndexAdded added) {
         for(SilentPaymentAddressSubscription subscription : silentPaymentsAddressesSubscribed.values()) {
-            electrumServerService.getIndexQuerier().startMempoolScan(subscription.getAddress(), null, null, new WeakReference<>(this));
+            electrumServerService.getIndexQuerier().startMempoolScan(subscription.getAddress(), null, null, subscription.getLabels(), new WeakReference<>(this));
         }
     }
 

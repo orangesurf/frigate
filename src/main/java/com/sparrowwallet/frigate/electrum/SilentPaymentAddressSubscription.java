@@ -8,15 +8,21 @@ import java.util.Set;
 
 public class SilentPaymentAddressSubscription {
     private final SilentPaymentScanAddress address;
+    private final Set<Integer> labels;
     private int highestBlockHeight;
     private final Set<Sha256Hash> mempoolTxids = new HashSet<>();
 
-    public SilentPaymentAddressSubscription(SilentPaymentScanAddress address) {
+    public SilentPaymentAddressSubscription(SilentPaymentScanAddress address, Set<Integer> labels) {
         this.address = address;
+        this.labels = labels;
     }
 
     public SilentPaymentScanAddress getAddress() {
         return address;
+    }
+
+    public Set<Integer> getLabels() {
+        return labels;
     }
 
     public int getHighestBlockHeight() {

@@ -1,6 +1,8 @@
 package com.sparrowwallet.frigate.cli;
 
+import com.beust.jcommander.IParameterValidator;
 import com.beust.jcommander.Parameter;
+import com.beust.jcommander.ParameterException;
 import com.sparrowwallet.drongo.Network;
 import org.slf4j.event.Level;
 
@@ -35,9 +37,21 @@ public class Args {
     @Parameter(names = { "--start", "-b" }, description = "Scan start block height or timestamp")
     public Long start;
 
+    @Parameter(names = {"--labels", "-a"}, description = "List of positive integers representing labels to scan for (change is always included)", validateWith = PositiveIntegerValidator.class)
+    public List<Integer> labels = new ArrayList<>();
+
     @Parameter(names = { "--follow", "-f" }, description = "Keep client open after initial scan to receive additional transaction")
     public boolean follow;
 
     @Parameter(names = { "--quiet", "-q" }, description = "Disable printing of the progress bar")
     public boolean quiet;
+
+    public static class PositiveIntegerValidator implements IParameterValidator {
+        public void validate(String name, String value) throws ParameterException {
+            int n = Integer.parseInt(value);
+            if(n < 0) {
+                throw new ParameterException("Parameter " + name + " should be positive (found " + value + ")");
+            }
+        }
+    }
 }

@@ -24,17 +24,19 @@ public class FrigateCli implements Thread.UncaughtExceptionHandler {
     private String scanPrivateKey;
     private String spendPublicKey;
     private Long start;
+    private final Integer[] labels;
 
     private static ElectrumTransport transport;
     private Thread reader;
 
     private static final EventBus EVENT_BUS = new EventBus();
 
-    public FrigateCli(HostAndPort server, String scanPrivateKey, String spendPublicKey, Long start) {
+    public FrigateCli(HostAndPort server, String scanPrivateKey, String spendPublicKey, Long start, Integer[] labels) {
         this.server = server;
         this.scanPrivateKey = scanPrivateKey;
         this.spendPublicKey = spendPublicKey;
         this.start = start;
+        this.labels = labels;
     }
 
     public void promptForMissingValues() {
@@ -82,7 +84,7 @@ public class FrigateCli implements Thread.UncaughtExceptionHandler {
     public void scan(boolean follow, boolean quiet) {
         JsonRpcClient jsonRpcClient = new JsonRpcClient(getTransport());
         ElectrumClientService electrumClientService = jsonRpcClient.onDemand(ElectrumClientService.class);
-        String address = electrumClientService.subscribeSilentPayments(scanPrivateKey, spendPublicKey, start);
+        String address = electrumClientService.subscribeSilentPayments(scanPrivateKey, spendPublicKey, start, labels);
 
         try {
             ScanProgress scanProgress = new ScanProgress(address, !follow, !quiet);
@@ -151,7 +153,12 @@ public class FrigateCli implements Thread.UncaughtExceptionHandler {
 
         HostAndPort server = HostAndPort.fromString(args.host == null ? "127.0.0.1" : args.host);
 
-        FrigateCli frigateCli = new FrigateCli(server, args.scanPrivateKey, args.spendPublicKey, args.start);
+        Integer[] labels = null;
+        if(args.labels != null) {
+            labels = args.labels.toArray(new Integer[0]);
+        }
+
+        FrigateCli frigateCli = new FrigateCli(server, args.scanPrivateKey, args.spendPublicKey, args.start, labels);
         frigateCli.promptForMissingValues();
         frigateCli.connect();
         frigateCli.scan(args.follow, args.quiet);

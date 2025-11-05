@@ -182,20 +182,20 @@ public class Index {
         }
     }
 
-    public List<TxEntry> getHistoryAsync(SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight, boolean scanForChange, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
+    public List<TxEntry> getHistoryAsync(SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
         ConcurrentLinkedQueue<TxEntry> queue = new ConcurrentLinkedQueue<>();
         AtomicLong rowsProcessedStart = new AtomicLong(0L);
 
         try {
             dbManager.executeRead(connection -> {
-                String sql = getSql(startHeight, endHeight, scanForChange);
+                String sql = getSql(subscription, startHeight, endHeight);
 
                 try(DuckDBPreparedStatement statement = connection.prepareStatement(sql).unwrap(DuckDBPreparedStatement.class)) {
                     if(isUnsubscribed(scanAddress, subscriptionStatusRef)) {
                         return false;
                     }
 
-                    bindParameters(statement, scanAddress, startHeight, endHeight, scanForChange);
+                    bindParameters(statement, scanAddress, subscription, startHeight, endHeight);
 
                     try(ScheduledThreadPoolExecutor queryProgressExecutor = new ScheduledThreadPoolExecutor(1, r -> {
                         ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("IndexQueryProgress-%d").build();
@@ -279,7 +279,8 @@ public class Index {
         return history;
     }
 
-    private String getSql(Integer startHeight, Integer endHeight, boolean scanForChange) {
+    private String getSql(SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight) {
+        String labelsStr = "[" + String.join(", ", Collections.nCopies(subscription.labels().length, "?")) + "]";
         if(useCuda) {
             String sql = "SELECT txid, tweak_key, height FROM cudasp_scan((SELECT txid, height, tweak_key, outputs FROM " + TWEAK_TABLE;
 
@@ -298,12 +299,12 @@ public class Index {
                 sql += "height <= ?";
             }
 
-            sql += "), ?, ?, " + (scanForChange ? "[?]" : "CAST([] AS BLOB[])") + ", batch_size := ?) ORDER BY height";
+            sql += "), ?, ?, " + labelsStr + ", batch_size := ?) ORDER BY height";
 
             return sql;
         } else {
             String sql = "SELECT txid, tweak_key, height FROM " + TWEAK_TABLE +
-                    " WHERE scan_silent_payments(outputs, [?, ?, tweak_key], " + (scanForChange ? "[?])" : "[])");
+                    " WHERE scan_silent_payments(outputs, [?, ?, tweak_key], " + labelsStr + ")";
 
             if(startHeight != null) {
                 sql += " AND height >= ?";
@@ -316,7 +317,7 @@ public class Index {
         }
     }
 
-    private void bindParameters(DuckDBPreparedStatement statement, SilentPaymentScanAddress scanAddress, Integer startHeight, Integer endHeight, boolean scanForChange) throws SQLException {
+    private void bindParameters(DuckDBPreparedStatement statement, SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight) throws SQLException {
         int index = 1;
         if(useCuda) {
             if(startHeight != null) {
@@ -327,15 +328,15 @@ public class Index {
             }
             statement.setBytes(index++, Utils.reverseBytes(scanAddress.getScanKey().getPrivKeyBytes()));
             statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
-            if(scanForChange) {
-                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getChangeTweakKey()));
+            for(Integer label : subscription.labels()) {
+                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getLabelledTweakKey(label)));
             }
             statement.setInt(index, cudaBatchSize);
         } else {
             statement.setBytes(index++, scanAddress.getScanKey().getPrivKeyBytes());
             statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
-            if(scanForChange) {
-                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getChangeTweakKey()));
+            for(Integer label : subscription.labels()) {
+                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getLabelledTweakKey(label)));
             }
             if(startHeight != null) {
                 statement.setInt(index++, startHeight);
