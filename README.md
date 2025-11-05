@@ -156,7 +156,7 @@ A dictionary with the following key/value pairs:
 2. A `progress` key/value pair indicating the progress of a historical scan:
 - _progress_: A floating point value between `0.0` and `1.0`. Will be `1.0` for all current (up to date) results.
 
-3. A `history` array of transactions. Confirmed transactions are listed in blockchain order. Each transaction is a dictionary with the following keys:
+3. A `history` array of transactions. Confirmed transactions are listed in order by height. Each transaction is a dictionary with the following keys:
 - _height_: The integer height of the block the transaction was confirmed in. For mempool transactions, `0` should be used.
 - _tx_hash_: The transaction hash in hexadecimal.
 - _tweak_key_: The tweak key (`input_hash*A`) for the transaction in compressed format.
