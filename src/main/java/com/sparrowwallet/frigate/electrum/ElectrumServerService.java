@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.ref.WeakReference;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @JsonRpcService
 public class ElectrumServerService {
@@ -274,7 +275,7 @@ public class ElectrumServerService {
         Set<Integer> labelSet = new HashSet<>();
         labelSet.add(0);
         if(labels != null) {
-            labelSet.addAll(Arrays.asList(labels));
+            labelSet.addAll(Arrays.stream(labels).filter(Objects::nonNull).filter(integer -> integer.compareTo(0) > 0).collect(Collectors.toSet()));
         }
         return Collections.unmodifiableSet(labelSet);
     }
