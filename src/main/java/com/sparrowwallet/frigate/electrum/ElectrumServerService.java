@@ -75,6 +75,42 @@ public class ElectrumServerService {
         return Frigate.SERVER_NAME + " " + Frigate.SERVER_VERSION + "\n" + bitcoindClient.getNetworkInfo().subversion() + (bitcoindClient.getNetworkInfo().networkactive() ? "" : " (disconnected)");
     }
 
+    @JsonRpcMethod("server.features")
+    public ServerFeatures getServerFeatures() {
+        if(electrumBackendService != null) {
+            return electrumBackendService.getServerFeatures();
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use server.features");
+    }
+
+    @JsonRpcMethod("server.add_peer")
+    public boolean addPeer(@JsonRpcParam("features") ServerFeatures features) {
+        if(electrumBackendService != null) {
+            return electrumBackendService.addPeer(features);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use server.add_peer");
+    }
+
+    @JsonRpcMethod("server.donation_address")
+    public String getDonationAddress() {
+        if(electrumBackendService != null) {
+            return electrumBackendService.getDonationAddress();
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use server.donation_address");
+    }
+
+    @JsonRpcMethod("server.peers.subscribe")
+    public List<ServerPeer> subscribePeers() {
+        if(electrumBackendService != null) {
+            return electrumBackendService.subscribePeers();
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use server.peers.subscribe");
+    }
+
     @JsonRpcMethod("blockchain.estimatefee")
     public Double estimateFee(@JsonRpcParam("number") int blocks) throws BitcoindIOException {
         try {
@@ -115,9 +151,10 @@ public class ElectrumServerService {
     }
 
     @JsonRpcMethod("server.ping")
-    public void ping() throws BitcoindIOException {
+    public Object ping() throws BitcoindIOException {
         try {
             bitcoindClient.getBitcoindService().uptime();
+            return null;
         } catch(IllegalStateException e) {
             throw new BitcoindIOException(e);
         }
@@ -145,6 +182,15 @@ public class ElectrumServerService {
         throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.unsubscribe");
     }
 
+    @JsonRpcMethod("blockchain.scripthash.get_balance")
+    public ScriptHashBalance getBalance(@JsonRpcParam("scripthash") String scriptHash) {
+        if(electrumBackendService != null) {
+            return electrumBackendService.getBalance(scriptHash);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.get_balance");
+    }
+
     @JsonRpcMethod("blockchain.scripthash.get_history")
     public Collection<TxEntry> getHistory(@JsonRpcParam("scripthash") String scriptHash) {
         if(electrumBackendService != null) {
@@ -154,8 +200,33 @@ public class ElectrumServerService {
         throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.get_history");
     }
 
+    @JsonRpcMethod("blockchain.scripthash.get_mempool")
+    public Collection<TxEntry> getMempool(@JsonRpcParam("scripthash") String scriptHash) {
+        if(electrumBackendService != null) {
+            return electrumBackendService.getMempool(scriptHash);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.get_mempool");
+    }
+
+    @JsonRpcMethod("blockchain.scripthash.listunspent")
+    public Collection<UnspentOutput> listUnspent(@JsonRpcParam("scripthash") String scriptHash) {
+        if(electrumBackendService != null) {
+            return electrumBackendService.listUnspent(scriptHash);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.scripthash.listunspent");
+    }
+
     @JsonRpcMethod("blockchain.block.header")
-    public String getBlockHeader(@JsonRpcParam("height") int height) throws BitcoindIOException, BlockNotFoundException {
+    public Object getBlockHeader(@JsonRpcParam("height") int height, @JsonRpcParam("cp_height") @JsonRpcOptional Integer cpHeight) throws BitcoindIOException, BlockNotFoundException {
+        if(cpHeight != null && cpHeight > 0) {
+            if(electrumBackendService != null) {
+                return electrumBackendService.getBlockHeader(height, cpHeight);
+            }
+            throw new UnsupportedOperationException("Configure backendElectrumServer to use cp_height");
+        }
+
         try {
             String blockHash = bitcoindClient.getBitcoindService().getBlockHash(height);
             return bitcoindClient.getBitcoindService().getBlockHeader(blockHash, false);
@@ -164,6 +235,15 @@ public class ElectrumServerService {
         } catch(IllegalStateException e) {
             throw new BitcoindIOException(e);
         }
+    }
+
+    @JsonRpcMethod("blockchain.block.headers")
+    public BlockHeaders getBlockHeaders(@JsonRpcParam("start_height") int startHeight, @JsonRpcParam("count") int count, @JsonRpcParam("cp_height") @JsonRpcOptional Integer cpHeight) {
+        if(electrumBackendService != null) {
+            return electrumBackendService.getBlockHeaders(startHeight, count, cpHeight);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.block.headers");
     }
 
     @JsonRpcMethod("blockchain.block.stats")
@@ -220,6 +300,24 @@ public class ElectrumServerService {
                 throw new BitcoindIOException(e);
             }
         }
+    }
+
+    @JsonRpcMethod("blockchain.transaction.get_merkle")
+    public TransactionMerkle getTransactionMerkle(@JsonRpcParam("tx_hash") String txHash, @JsonRpcParam("height") int height) {
+        if(electrumBackendService != null) {
+            return electrumBackendService.getTransactionMerkle(txHash, height);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.transaction.get_merkle");
+    }
+
+    @JsonRpcMethod("blockchain.transaction.id_from_pos")
+    public Object getTransactionIdFromPos(@JsonRpcParam("height") int height, @JsonRpcParam("tx_pos") int txPos, @JsonRpcParam("merkle") @JsonRpcOptional Boolean merkle) {
+        if(electrumBackendService != null) {
+            return electrumBackendService.getTransactionIdFromPos(height, txPos, merkle);
+        }
+
+        throw new UnsupportedOperationException("Configure backendElectrumServer to use blockchain.transaction.id_from_pos");
     }
 
     @JsonRpcMethod("blockchain.transaction.broadcast")

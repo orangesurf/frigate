@@ -71,6 +71,12 @@ public class RequestHandler implements Runnable, SubscriptionStatus, Thread.Unca
                     break;
                 }
 
+                // Skip requests with null bytes or other control characters
+                if(request.indexOf(0) >= 0 || request.chars().anyMatch(c -> c < 32 && c != '\t' && c != '\r' && c != '\n')) {
+                    log.warn("Skipping malformed request with control characters");
+                    continue;
+                }
+
                 String response = rpcServer.handle(request, electrumServerService);
                 out.println(response);
                 out.flush();
