@@ -124,7 +124,7 @@ blockchain.silentpayments.subscribe(scan_private_key, spend_public_key, start, l
 - _scan_private_key_: A 64 character string containing the hex of the scan private key.
 - _spend_public_key_: A 66 character string containing the hex of the spend public key.
 - _start_: (Optional) Block height or timestamp to start scanning from. Values above 500,000,000 are treated as seconds from the start of the epoch.
-- _labels_: (Optional) An array of positive integers specifying additional silent payment labels to scan for. Change (`m = 0`) is always included regardless.
+- _labels_: (Optional) An array of positive integers specifying additional silent payment labels to scan for. Change (`m = 0`) is always included regardless. To aid in wallet recovery, this parameter should only be used for specialized applications. 
 
 **Result**
 
