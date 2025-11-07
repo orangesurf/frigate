@@ -39,10 +39,13 @@ public class ElectrumTransport implements Transport, Closeable {
     private boolean closed = false;
     private Exception lastException;
 
-    private final Gson gson = new Gson();
+    private static final Gson GSON = new Gson();
 
     private final JsonRpcServer jsonRpcServer = new JsonRpcServer();
     private final Object subscriptionService;
+
+    private PrintWriter out;
+    private BufferedReader in;
 
     public ElectrumTransport(HostAndPort electrumServer, Object subscriptionService) {
         this.electrumServer = electrumServer;
@@ -56,6 +59,9 @@ public class ElectrumTransport implements Transport, Closeable {
 
             SocketFactory socketFactory = SocketFactory.getDefault();
             this.socket = socketFactory.createSocket(host, port);
+            this.socket.setSoTimeout(30000); // 30 second timeout for reads
+            this.out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)));
+            this.in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             this.running = true;
         } catch(UnknownHostException e) {
             log.error("Unknown host: " + electrumServer.getHost());
@@ -68,14 +74,14 @@ public class ElectrumTransport implements Transport, Closeable {
     public String pass(String request) throws IOException {
         clientRequestLock.lock();
         try {
-            Rpc sentRpc = request.startsWith("{") ? gson.fromJson(request, Rpc.class) : null;
+            Rpc sentRpc = request.startsWith("{") ? GSON.fromJson(request, Rpc.class) : null;
             Rpc recvRpc;
             String recv;
 
             writeRequest(request);
             do {
                 recv = readResponse();
-                recvRpc = recv.startsWith("{") ? gson.fromJson(response, Rpc.class) : null;
+                recvRpc = recv.startsWith("{") ? GSON.fromJson(response, Rpc.class) : null;
             } while(!Objects.equals(recvRpc, sentRpc));
 
             return recv;
@@ -87,11 +93,10 @@ public class ElectrumTransport implements Transport, Closeable {
     protected void writeRequest(String request) throws IOException {
         log.debug("> " + request);
 
-        if(socket == null) {
+        if(out == null) {
             throw new IllegalStateException("Socket connection has not been established.");
         }
 
-        PrintWriter out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)));
         out.println(request);
         out.flush();
     }
@@ -157,8 +162,6 @@ public class ElectrumTransport implements Transport, Closeable {
                 Thread.currentThread().interrupt();
             }
 
-            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-
             while(running) {
                 try {
                     String received = readInputStream(in);
@@ -186,9 +189,9 @@ public class ElectrumTransport implements Transport, Closeable {
                     }
                 }
             }
-        } catch(IOException e) {
+        } catch(Exception e) {
             if(!closed) {
-                log.error("Error opening socket inputstream", e);
+                log.error("Error reading from socket", e);
             }
             if(running) {
                 lastException = e;
@@ -232,10 +235,18 @@ public class ElectrumTransport implements Transport, Closeable {
 
     @Override
     public void close() throws IOException {
+        running = false;
+        closed = true;
+
+        if(out != null) {
+            out.close();
+        }
+        if(in != null) {
+            in.close();
+        }
         if(socket != null) {
             socket.close();
         }
-        closed = true;
     }
 
     public boolean isClosed() {
