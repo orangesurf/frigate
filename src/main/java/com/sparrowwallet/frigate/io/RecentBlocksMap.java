@@ -65,14 +65,14 @@ public class RecentBlocksMap {
         try {
             File recentBlocksFile = getRecentBlocksFile();
             if(recentBlocksFile.exists()) {
-                Reader reader = new FileReader(recentBlocksFile);
-                Type mapType = new TypeToken<Map<Integer, String>>() {}.getType();
-                Map<Integer, String> loadedData = getGson().fromJson(reader, mapType);
-                if(loadedData != null) {
-                    this.data.putAll(loadedData);
-                    enforceMaxSize();
+                try(Reader reader = new FileReader(recentBlocksFile)) {
+                    Type mapType = new TypeToken<Map<Integer, String>>() {}.getType();
+                    Map<Integer, String> loadedData = getGson().fromJson(reader, mapType);
+                    if(loadedData != null) {
+                        this.data.putAll(loadedData);
+                        enforceMaxSize();
+                    }
                 }
-                reader.close();
             }
         } catch(IOException e) {
             // Ignore and start with empty map
@@ -87,10 +87,10 @@ public class RecentBlocksMap {
                 Storage.createOwnerOnlyFile(recentBlocksFile);
             }
 
-            Writer writer = new FileWriter(recentBlocksFile);
-            gson.toJson(this.data, writer);
-            writer.flush();
-            writer.close();
+            try(Writer writer = new FileWriter(recentBlocksFile)) {
+                gson.toJson(this.data, writer);
+                writer.flush();
+            }
         } catch(IOException e) {
             //Ignore
         }

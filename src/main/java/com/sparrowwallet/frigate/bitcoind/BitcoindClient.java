@@ -45,7 +45,7 @@ public class BitcoindClient {
     private final Condition syncingCondition = syncingLock.newCondition();
     private boolean syncing;
 
-    private boolean stopped;
+    private volatile boolean stopped;
 
     private final Map<HashIndex, byte[]> scriptPubKeyCache;
     private final Set<Sha256Hash> mempoolTxIds = new HashSet<>();

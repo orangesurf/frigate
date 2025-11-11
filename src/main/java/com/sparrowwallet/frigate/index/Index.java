@@ -36,7 +36,7 @@ public class Index {
     public static final int HISTORY_PAGE_SIZE = 100;
 
     private final DbManager dbManager;
-    private int lastBlockIndexed = -1;
+    private volatile int lastBlockIndexed = -1;
     private final boolean useCuda;
     private final int cudaBatchSize;
 

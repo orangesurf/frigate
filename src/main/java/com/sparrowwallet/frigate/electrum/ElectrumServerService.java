@@ -67,8 +67,14 @@ public class ElectrumServerService {
     public List<String> getServerVersion(@JsonRpcParam("client_name") String clientName, @JsonRpcParam("protocol_version") Object protocolVersion) throws UnsupportedVersionException {
         Version clientVersion = new Version(switch(protocolVersion) {
             case String s -> s;
-            case List<?> versions -> versions.size() > 1 ? versions.get(1).toString() : versions.get(0).toString();
-            case String[] versions -> versions.length > 1 ? versions[1] : versions[0];
+            case List<?> versions -> {
+                if(versions.isEmpty()) throw new IllegalArgumentException("protocol_version list cannot be empty");
+                yield versions.size() > 1 ? versions.get(1).toString() : versions.get(0).toString();
+            }
+            case String[] versions -> {
+                if(versions.length == 0) throw new IllegalArgumentException("protocol_version array cannot be empty");
+                yield versions.length > 1 ? versions[1] : versions[0];
+            }
             case null, default -> throw new IllegalArgumentException("Invalid protocol_version type: " + protocolVersion);
         });
 
@@ -347,7 +353,7 @@ public class ElectrumServerService {
                 } catch(JsonRpcException ex) {
                     throw new TransactionNotFoundException(ex.getErrorMessage());
                 } catch(IllegalStateException ex) {
-                    throw new BitcoindIOException(e);
+                    throw new BitcoindIOException(ex);
                 }
             } catch(IllegalStateException e) {
                 throw new BitcoindIOException(e);

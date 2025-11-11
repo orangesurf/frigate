@@ -327,8 +327,10 @@ The extension has been compiled for the following architectures:
 - 89 - Ada Lovelace (RTX 40xx/50xx series)
 - 90 - Hopper (H100/H200)
 
-Frigate only implements some Electrum server RPCs, and contains an experimental feature in which it proxies unsupported requests to another Electrum server.
-This server can be configured with `backendElectrumServer`, and is intended to be used to point to a server running on the same host.
+Frigate currently only implements a selection of Electrum server RPCs directly.
+Any other requests (including address-related lookups) can be proxied to another Electrum server.
+This server is configured with `backendElectrumServer`, and is intended to be used to point to a server running locally on the same host.
+The Electrum protocol from 1.3 to 1.6 is supported - for 1.6, ensure Bitcoin Core 28 or higher.
 
 ## Usage
 

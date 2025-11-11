@@ -88,6 +88,12 @@ public class RequestHandler implements Runnable, SubscriptionStatus, Thread.Unca
             this.connected = false;
             this.disconnected.set(true);
             Frigate.getEventBus().unregister(this);
+
+            try {
+                clientSocket.close();
+            } catch(IOException e) {
+                log.error("Error closing client socket", e);
+            }
         }
     }
 
