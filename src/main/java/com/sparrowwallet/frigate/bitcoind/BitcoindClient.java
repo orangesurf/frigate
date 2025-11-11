@@ -28,6 +28,7 @@ public class BitcoindClient {
 
     public static final int DEFAULT_SCRIPT_PUB_KEY_CACHE_SIZE = 10000000;
     private static final int MAX_REORG_DEPTH = 10;
+    public static final int MIN_SUBMIT_PACKAGE_VERSION = 280000;
 
     private final JsonRpcClient jsonRpcClient;
     private final Timer timer = new Timer(true);
@@ -460,5 +461,9 @@ public class BitcoindClient {
                 return size() > maxSize;
             }
         };
+    }
+
+    public boolean containsSubmitPackage() {
+        return networkInfo.version() >= MIN_SUBMIT_PACKAGE_VERSION;
     }
 }

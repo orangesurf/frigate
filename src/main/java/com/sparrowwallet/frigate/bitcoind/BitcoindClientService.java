@@ -21,7 +21,7 @@ public interface BitcoindClientService {
     NetworkInfo getNetworkInfo();
 
     @JsonRpcMethod("estimatesmartfee")
-    FeeInfo estimateSmartFee(@JsonRpcParam("conf_target") int blocks);
+    FeeInfo estimateSmartFee(@JsonRpcParam("conf_target") int blocks, @JsonRpcParam("estimate_mode") @JsonRpcOptional String mode);
 
     @JsonRpcMethod("getrawmempool")
     Set<Sha256Hash> getRawMempool();
@@ -61,5 +61,8 @@ public interface BitcoindClientService {
 
     @JsonRpcMethod("sendrawtransaction")
     String sendRawTransaction(@JsonRpcParam("hexstring") String rawTx, @JsonRpcParam("maxfeerate") Double maxFeeRate);
+
+    @JsonRpcMethod("submitpackage")
+    PackageResult submitPackage(@JsonRpcParam("package") String[] rawTxes, @JsonRpcParam("maxfeerate") @JsonRpcOptional Double maxFeeRate, @JsonRpcParam("maxburnamount") @JsonRpcOptional Double maxBurnAmount);
 }
 

@@ -14,6 +14,9 @@ import java.util.List;
 @JsonRpcService
 @JsonRpcParams(ParamsType.ARRAY)
 public interface ElectrumBackendService {
+    @JsonRpcMethod("server.version")
+    List<String> getServerVersion(@JsonRpcParam("client_name") String clientName, @JsonRpcParam("protocol_version") Object protocolVersion);
+
     @JsonRpcMethod("server.features")
     ServerFeatures getServerFeatures();
 
@@ -48,10 +51,13 @@ public interface ElectrumBackendService {
     Collection<UnspentOutput> listUnspent(@JsonRpcParam("scripthash") String scriptHash);
 
     @JsonRpcMethod("blockchain.block.header")
-    Object getBlockHeader(@JsonRpcParam("height") int height, @JsonRpcParam("cp_height") @JsonRpcOptional Integer cpHeight);
+    Object getBlockHeader(@JsonRpcParam("height") int height, @JsonRpcParam("cp_height") Integer cpHeight);
 
     @JsonRpcMethod("blockchain.block.headers")
-    BlockHeaders getBlockHeaders(@JsonRpcParam("start_height") int startHeight, @JsonRpcParam("count") int count, @JsonRpcParam("cp_height") @JsonRpcOptional Integer cpHeight);
+    Object getBlockHeaders(@JsonRpcParam("start_height") int startHeight, @JsonRpcParam("count") int count);
+
+    @JsonRpcMethod("blockchain.block.headers")
+    Object getBlockHeaders(@JsonRpcParam("start_height") int startHeight, @JsonRpcParam("count") int count, @JsonRpcParam("cp_height") Integer cpHeight);
 
     @JsonRpcMethod("blockchain.transaction.get_merkle")
     TransactionMerkle getTransactionMerkle(@JsonRpcParam("tx_hash") String txHash, @JsonRpcParam("height") int height);
