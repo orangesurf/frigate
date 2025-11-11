@@ -290,15 +290,15 @@ public class BitcoindClient {
                             }
                         }
 
-                        int blocksReorged = tip.height() - reorgStartHeight + 1;
+                        int blocksReorged = tip.height() - reorgStartHeight;
                         if(blocksReorged > 1) {
-                            log.info("Reorg detected of last block, block height " + tip.height() + " was " + lastBlock + " and now is " + blockhash);
-                        } else {
                             log.info("Reorg detected of last " + blocksReorged + " blocks, block height " + tip.height() + " was " + lastBlock + " and now is " + blockhash);
+                        } else {
+                            log.info("Reorg detected of last block, block height " + tip.height() + " was " + lastBlock + " and now is " + blockhash);
                         }
 
                         Frigate.getEventBus().post(new BlockReorgEvent(reorgStartHeight));
-                        blocksIndex.removeFromIndex(reorgStartHeight);
+                        blocksIndex.removeFromIndex(reorgStartHeight + 1);
                         updateBlocksIndex();
 
                         lastBlock = null;
