@@ -10,8 +10,6 @@ It has four goals:
 3. To demonstrate an efficient "in database" technique of scanning for Silent Payments transactions.
 4. _(New)_ To demonstrate the use of GPU computation to dramatically decrease scanning time.
 
-#### This is alpha software, and should not be used in production.
-
 ## Motivation
 
 [BIP 352](https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki) has proposed that light clients use compact block filters to scan for UTXOs received to a Silent Payments address.
@@ -272,6 +270,8 @@ GPU performance is significantly higher. The following results were measured usi
 The GPU computation is so rapid that the bulk of the time is now spent retrieving the data from the database and performing GPU setup, rather than the actual EC operations. 
 This approach is performant enough that a multi-user instance is now possible.
 As all EC computation is offloaded to the GPU, CPU overhead is low and normal Electrum server RPC calls can be handled simultaneously without any performance degradation.
+
+[Benchmarking](BENCHMARKING.md) reveals that using multiple mid-tier GPUs outperforms fewer high-tier GPUs at roughly the same price point, especially with many concurrent client requests.
 
 ## Configuration
 
