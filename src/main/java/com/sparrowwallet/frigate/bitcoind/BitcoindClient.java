@@ -311,7 +311,7 @@ public class BitcoindClient {
                 if(currentBlock == null || !currentBlock.equals(blockchainInfo.bestblockhash())) {
                     VerboseBlockHeader blockHeader = getBitcoindService().getBlockHeader(blockchainInfo.bestblockhash());
                     tip = blockHeader.getBlockHeader();
-                    log.info("New block height " + tip.height());
+                    log.debug("New block height " + tip.height());
                     Frigate.getEventBus().post(tip);
                     updateBlocksIndex();
                 }
