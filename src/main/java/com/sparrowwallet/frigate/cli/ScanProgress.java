@@ -74,7 +74,7 @@ public class ScanProgress {
 
     public void waitForCompletion() throws InterruptedException {
         synchronized (completionLock) {
-            while (!isComplete) {
+            while(!isComplete) {
                 completionLock.wait();
             }
         }

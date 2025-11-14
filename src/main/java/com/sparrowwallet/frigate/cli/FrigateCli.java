@@ -7,6 +7,7 @@ import com.google.common.net.HostAndPort;
 import com.sparrowwallet.drongo.Drongo;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.frigate.Frigate;
+import com.sparrowwallet.frigate.electrum.ElectrumServerService;
 import com.sparrowwallet.frigate.electrum.ElectrumTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +84,7 @@ public class FrigateCli implements Thread.UncaughtExceptionHandler {
     public void scan(boolean follow, boolean quiet) {
         JsonRpcClient jsonRpcClient = new JsonRpcClient(getTransport());
         ElectrumClientService electrumClientService = jsonRpcClient.onDemand(ElectrumClientService.class);
+        electrumClientService.getServerVersion(APP_NAME, ElectrumServerService.MIN_VERSION.get());
         String address = electrumClientService.subscribeSilentPayments(scanPrivateKey, spendPublicKey, start, labels);
 
         try {

@@ -25,8 +25,8 @@ import java.util.stream.Collectors;
 @JsonRpcService
 public class ElectrumServerService {
     private static final Logger log = LoggerFactory.getLogger(ElectrumServerService.class);
-    private static final Version MIN_VERSION = new Version("1.4");
     private static final double DEFAULT_FEE_RATE = 0.00001d;
+    public static final Version MIN_VERSION = new Version("1.4");
     public static final Version MAX_DEFAULT_VERSION = new Version("1.4.2");
     public static final Version MAX_SUBMIT_PACKAGE_VERSION = new Version("1.6");
 
