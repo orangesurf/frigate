@@ -25,7 +25,6 @@ import java.util.stream.Collectors;
 @JsonRpcService
 public class ElectrumServerService {
     private static final Logger log = LoggerFactory.getLogger(ElectrumServerService.class);
-    private static final double DEFAULT_FEE_RATE = 0.00001d;
     public static final Version MIN_VERSION = new Version("1.4");
     public static final Version MAX_DEFAULT_VERSION = new Version("1.4.2");
     public static final Version MAX_SUBMIT_PACKAGE_VERSION = new Version("1.6");
@@ -60,7 +59,7 @@ public class ElectrumServerService {
     }
 
     private Version getMaxSupportedVersion() {
-        return bitcoindClient.containsSubmitPackage() ? MAX_SUBMIT_PACKAGE_VERSION : MAX_DEFAULT_VERSION;
+        return bitcoindClient != null && bitcoindClient.containsSubmitPackage() ? MAX_SUBMIT_PACKAGE_VERSION : MAX_DEFAULT_VERSION;
     }
 
     @JsonRpcMethod("server.version")
@@ -98,7 +97,7 @@ public class ElectrumServerService {
     @JsonRpcMethod("server.banner")
     public String getServerBanner() {
         checkVersionNegotiated();
-        return Frigate.SERVER_NAME + " " + Frigate.SERVER_VERSION + "\n" + bitcoindClient.getNetworkInfo().subversion() + (bitcoindClient.getNetworkInfo().networkactive() ? "" : " (disconnected)");
+        return Frigate.SERVER_NAME + " " + Frigate.SERVER_VERSION + (bitcoindClient != null ? "\n" + bitcoindClient.getNetworkInfo().subversion() + (bitcoindClient.getNetworkInfo().networkactive() ? "" : " (disconnected)") : "");
     }
 
     @JsonRpcMethod("server.features")
@@ -144,10 +143,14 @@ public class ElectrumServerService {
     @JsonRpcMethod("blockchain.estimatefee")
     public Double estimateFee(@JsonRpcParam("number") int blocks, @JsonRpcParam("mode") @JsonRpcOptional String mode) throws BitcoindIOException {
         checkVersionNegotiated();
+        if(bitcoindClient == null) {
+            return MempoolInfo.DEFAULT_FEE_RATE;
+        }
+
         try {
             FeeInfo feeInfo = bitcoindClient.getBitcoindService().estimateSmartFee(blocks, mode);
             if(feeInfo == null || feeInfo.feerate() == null) {
-                return DEFAULT_FEE_RATE;
+                return MempoolInfo.DEFAULT_FEE_RATE;
             }
 
             return feeInfo.feerate();
@@ -169,6 +172,10 @@ public class ElectrumServerService {
     @JsonRpcMethod("blockchain.relayfee")
     public Double getRelayFee() throws BitcoindIOException {
         checkVersionNegotiated();
+        if(bitcoindClient == null) {
+            return MempoolInfo.DEFAULT_FEE_RATE;
+        }
+
         try {
             MempoolInfo mempoolInfo = bitcoindClient.getBitcoindService().getMempoolInfo();
             return mempoolInfo.minrelaytxfee();
@@ -180,6 +187,10 @@ public class ElectrumServerService {
     @JsonRpcMethod("mempool.get_info")
     public MempoolInfo getMempoolInfo() throws BitcoindIOException {
         checkVersionNegotiated();
+        if(bitcoindClient == null) {
+            return MempoolInfo.DEFAULT;
+        }
+
         try {
             return bitcoindClient.getBitcoindService().getMempoolInfo();
         } catch(IllegalStateException e) {
@@ -191,14 +202,16 @@ public class ElectrumServerService {
     public ElectrumBlockHeader subscribeHeaders() {
         checkVersionNegotiated();
         requestHandler.setHeadersSubscribed(true);
-        return bitcoindClient.getTip();
+        return bitcoindClient != null ? bitcoindClient.getTip() : new ElectrumBlockHeader(0, "");
     }
 
     @JsonRpcMethod("server.ping")
     public Object ping() throws BitcoindIOException {
         checkVersionNegotiated();
         try {
-            bitcoindClient.getBitcoindService().uptime();
+            if(bitcoindClient != null) {
+                bitcoindClient.getBitcoindService().uptime();
+            }
             return null;
         } catch(IllegalStateException e) {
             throw new BitcoindIOException(e);
@@ -279,6 +292,10 @@ public class ElectrumServerService {
             throw new UnsupportedOperationException("Configure backendElectrumServer to use cp_height");
         }
 
+        if(bitcoindClient == null) {
+            throw new UnsupportedOperationException("Configure coreServer to use blockchain.block.header");
+        }
+
         try {
             String blockHash = bitcoindClient.getBitcoindService().getBlockHash(height);
             return bitcoindClient.getBitcoindService().getBlockHeader(blockHash, false);
@@ -306,6 +323,10 @@ public class ElectrumServerService {
     @JsonRpcMethod("blockchain.block.stats")
     public BlockStats getBlockStats(@JsonRpcParam("height") int height) throws BitcoindIOException, BlockNotFoundException {
         checkVersionNegotiated();
+        if(bitcoindClient == null) {
+            throw new UnsupportedOperationException("Configure coreServer to use blockchain.block.stats");
+        }
+
         try {
             return bitcoindClient.getBitcoindService().getBlockStats(height);
         } catch(JsonRpcException e) {
@@ -319,6 +340,10 @@ public class ElectrumServerService {
     @SuppressWarnings("unchecked")
     public Object getTransaction(@JsonRpcParam("tx_hash") String tx_hash, @JsonRpcParam("verbose") @JsonRpcOptional boolean verbose) throws BitcoindIOException, TransactionNotFoundException {
         checkVersionNegotiated();
+        if(bitcoindClient == null) {
+            throw new UnsupportedOperationException("Configure coreServer to use blockchain.transaction.get");
+        }
+
         if(verbose) {
             try {
                 return bitcoindClient.getBitcoindService().getRawTransaction(tx_hash, true);
@@ -384,6 +409,10 @@ public class ElectrumServerService {
     @JsonRpcMethod("blockchain.transaction.broadcast")
     public String broadcastTransaction(@JsonRpcParam("raw_tx") String rawTx) throws BitcoindIOException, BroadcastFailedException {
         checkVersionNegotiated();
+        if(bitcoindClient == null) {
+            throw new UnsupportedOperationException("Configure coreServer to use blockchain.transaction.broadcast");
+        }
+
         try {
             return bitcoindClient.getBitcoindService().sendRawTransaction(rawTx, 0d);
         } catch(JsonRpcException e) {
@@ -396,6 +425,10 @@ public class ElectrumServerService {
     @JsonRpcMethod("blockchain.transaction.broadcast_package")
     public Object broadcastTransactionPackage(@JsonRpcParam("raw_txs") String[] rawTxes, @JsonRpcParam("verbose") @JsonRpcOptional Boolean verbose) throws BitcoindIOException, BroadcastFailedException {
         checkVersionNegotiated();
+        if(bitcoindClient == null) {
+            throw new UnsupportedOperationException("Configure coreServer to use blockchain.transaction.broadcast_package");
+        }
+
         try {
             if(verbose == null || !verbose) {
                 PackageResult result = bitcoindClient.getBitcoindService().submitPackage(rawTxes, null, null);
@@ -442,6 +475,9 @@ public class ElectrumServerService {
         int startHeight = 0;
         if(start != null) {
             if(start > Transaction.MAX_BLOCK_LOCKTIME) {
+                if(bitcoindClient == null) {
+                    throw new UnsupportedOperationException("Use a start block height instead of a timestamp when coreServer is not configured");
+                }
                 startHeight = bitcoindClient.findBlockByTimestamp(start);
             } else if(start > 0) {
                 startHeight = start.intValue();
