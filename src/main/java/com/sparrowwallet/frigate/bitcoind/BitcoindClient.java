@@ -245,11 +245,16 @@ public class BitcoindClient {
     private Script getScriptPubKey(BitcoindClientService bitcoindClientService, HexFormat hexFormat, HashIndex hashIndex) {
         Script scriptPubKey = getFromScriptPubKeyCache(hashIndex);
         if(scriptPubKey == null) {
-            String txHex = (String)bitcoindClientService.getRawTransaction(hashIndex.getHash().toString(), false);
-            Transaction tx = new Transaction(hexFormat.parseHex(txHex));
-            TransactionOutput txOutput = tx.getOutputs().get((int)hashIndex.getIndex());
-            addtoScriptPubKeyCache(hashIndex.getHash(), (int)hashIndex.getIndex(), txOutput.getScriptBytes());
-            scriptPubKey = getFromScriptPubKeyCache(hashIndex);
+            try {
+                String txHex = (String)bitcoindClientService.getRawTransaction(hashIndex.getHash().toString(), false);
+                Transaction tx = new Transaction(hexFormat.parseHex(txHex));
+                TransactionOutput txOutput = tx.getOutputs().get((int)hashIndex.getIndex());
+                addtoScriptPubKeyCache(hashIndex.getHash(), (int)hashIndex.getIndex(), txOutput.getScriptBytes());
+                scriptPubKey = getFromScriptPubKeyCache(hashIndex);
+            } catch(Exception e) {
+                log.error("Error retrieving scriptPubKey for txid " + hashIndex.getHash() + " output index " + hashIndex.getIndex(), e);
+                throw e;
+            }
         }
 
         return scriptPubKey;
