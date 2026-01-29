@@ -10,6 +10,7 @@ import com.sparrowwallet.drongo.wallet.BlockTransaction;
 import com.sparrowwallet.frigate.Frigate;
 import com.sparrowwallet.frigate.electrum.ElectrumBlockHeader;
 import com.sparrowwallet.frigate.index.Index;
+import com.sparrowwallet.frigate.index.IndexMode;
 import com.sparrowwallet.frigate.io.Config;
 import com.sparrowwallet.frigate.io.CoreAuthType;
 import com.sparrowwallet.frigate.io.RecentBlocksMap;
@@ -50,6 +51,7 @@ public class BitcoindClient {
     private final Map<HashIndex, byte[]> scriptPubKeyCache;
     private final Set<Sha256Hash> mempoolTxIds = new HashSet<>();
     private final RecentBlocksMap recentBlocksMap = new RecentBlocksMap(MAX_REORG_DEPTH);
+    private final long utxoMinValue;
 
     public BitcoindClient(Index blocksIndex, Index mempoolIndex) {
         BitcoindTransport bitcoindTransport;
@@ -95,6 +97,7 @@ public class BitcoindClient {
             Config.get().setScriptPubKeyCacheSize(cacheSize);
         }
         this.scriptPubKeyCache = lruCache(cacheSize);
+        this.utxoMinValue = Config.get().getUtxoMinValue();
     }
 
     public void initialize() {
@@ -138,6 +141,7 @@ public class BitcoindClient {
     private synchronized void updateBlocksIndex() {
         BitcoindClientService bitcoindService = getBitcoindService();
         HexFormat hexFormat = HexFormat.of();
+        boolean utxoMode = blocksIndex.getIndexMode() == IndexMode.UTXO_ONLY;
 
         for(int i = blocksIndex.getLastBlockIndexed() + 1; i <= tip.height(); i++) {
             String blockHash = getBitcoindService().getBlockHash(i);
@@ -149,28 +153,64 @@ public class BitcoindClient {
 
             Map<BlockTransaction, byte[]> eligibleTransactions = new LinkedHashMap<>();
             Map<HashIndex, Script> spentScriptPubKeys = new HashMap<>();
+            Set<HashIndex> spentP2TROutpoints = utxoMode ? new HashSet<>() : null;
+
             for(Transaction tx : block.getTransactions()) {
                 for(int outputIndex = 0; outputIndex < tx.getOutputs().size(); outputIndex++) {
                     byte[] scriptPubKeyBytes = tx.getOutputs().get(outputIndex).getScriptBytes();
                     addtoScriptPubKeyCache(tx.getTxId(), outputIndex, scriptPubKeyBytes);
                 }
 
-                if(!tx.isCoinBase() && containsTaprootOutput(tx)) {
-                    for(TransactionInput txInput : tx.getInputs()) {
-                        HashIndex hashIndex = new HashIndex(txInput.getOutpoint().getHash(), txInput.getOutpoint().getIndex());
-                        spentScriptPubKeys.put(hashIndex, getScriptPubKey(bitcoindService, hexFormat, hashIndex));
+                if(!tx.isCoinBase()) {
+                    // In UTXO mode, collect spent P2TR outpoints for removal
+                    if(utxoMode) {
+                        for(TransactionInput txInput : tx.getInputs()) {
+                            HashIndex hashIndex = new HashIndex(txInput.getOutpoint().getHash(), txInput.getOutpoint().getIndex());
+                            Script spentScript = getScriptPubKey(bitcoindService, hexFormat, hashIndex);
+                            if(spentScript != null && ScriptType.P2TR.isScriptType(spentScript)) {
+                                spentP2TROutpoints.add(hashIndex);
+                            }
+                            spentScriptPubKeys.put(hashIndex, spentScript);
+                        }
                     }
 
-                    byte[] tweak = SilentPaymentUtils.getTweak(tx, spentScriptPubKeys, false);
-                    if(tweak != null) {
-                        BlockTransaction blkTx = new BlockTransaction(tx.getTxId(), i, block.getBlockHeader().getTimeAsDate(), 0L, tx, block.getHash());
-                        eligibleTransactions.put(blkTx, SilentPaymentUtils.getSecp256k1PubKey(tweak));
+                    if(containsTaprootOutput(tx, utxoMode ? utxoMinValue : 0)) {
+                        if(!utxoMode) {
+                            for(TransactionInput txInput : tx.getInputs()) {
+                                HashIndex hashIndex = new HashIndex(txInput.getOutpoint().getHash(), txInput.getOutpoint().getIndex());
+                                spentScriptPubKeys.put(hashIndex, getScriptPubKey(bitcoindService, hexFormat, hashIndex));
+                            }
+                        }
+
+                        byte[] tweak = SilentPaymentUtils.getTweak(tx, spentScriptPubKeys, false);
+                        if(tweak != null) {
+                            if(utxoMode) {
+                                // Filter outputs by value for UTXO mode
+                                Transaction filteredTx = filterOutputsByValue(tx, utxoMinValue);
+                                if(containsTaprootOutput(filteredTx, 0)) {
+                                    BlockTransaction blkTx = new BlockTransaction(filteredTx.getTxId(), i, block.getBlockHeader().getTimeAsDate(), 0L, filteredTx, block.getHash());
+                                    eligibleTransactions.put(blkTx, SilentPaymentUtils.getSecp256k1PubKey(tweak));
+                                }
+                            } else {
+                                BlockTransaction blkTx = new BlockTransaction(tx.getTxId(), i, block.getBlockHeader().getTimeAsDate(), 0L, tx, block.getHash());
+                                eligibleTransactions.put(blkTx, SilentPaymentUtils.getSecp256k1PubKey(tweak));
+                            }
+                        }
                     }
                 }
             }
 
+            // In UTXO mode, remove spent outputs first
+            if(utxoMode && !spentP2TROutpoints.isEmpty()) {
+                blocksIndex.removeSpentUtxos(spentP2TROutpoints);
+            }
+
             if(!eligibleTransactions.isEmpty()) {
-                blocksIndex.addToIndex(eligibleTransactions);
+                if(utxoMode) {
+                    blocksIndex.addUtxosToIndex(eligibleTransactions, utxoMinValue);
+                } else {
+                    blocksIndex.addToIndex(eligibleTransactions);
+                }
             }
         }
     }
@@ -178,6 +218,7 @@ public class BitcoindClient {
     private synchronized void updateMempoolIndex() {
         BitcoindClientService bitcoindService = getBitcoindService();
         HexFormat hexFormat = HexFormat.of();
+        boolean utxoMode = mempoolIndex.getIndexMode() == IndexMode.UTXO_ONLY;
 
         Set<Sha256Hash> currentMempoolTxids = bitcoindService.getRawMempool();
         Set<Sha256Hash> removedTxids = new HashSet<>(mempoolTxIds);
@@ -187,6 +228,7 @@ public class BitcoindClient {
 
         Map<BlockTransaction, byte[]> eligibleTransactions = new LinkedHashMap<>();
         Map<HashIndex, Script> spentScriptPubKeys = new HashMap<>();
+        Set<HashIndex> spentP2TROutpoints = utxoMode ? new HashSet<>() : null;
 
         for(Sha256Hash addedTxid : addedTxids) {
             try {
@@ -197,16 +239,41 @@ public class BitcoindClient {
                     addtoScriptPubKeyCache(tx.getTxId(), outputIndex, scriptPubKeyBytes);
                 }
 
-                if(!tx.isCoinBase() && containsTaprootOutput(tx)) {
-                    for(TransactionInput txInput : tx.getInputs()) {
-                        HashIndex hashIndex = new HashIndex(txInput.getOutpoint().getHash(), txInput.getOutpoint().getIndex());
-                        spentScriptPubKeys.put(hashIndex, getScriptPubKey(bitcoindService, hexFormat, hashIndex));
+                if(!tx.isCoinBase()) {
+                    // In UTXO mode, collect spent P2TR outpoints for removal
+                    if(utxoMode) {
+                        for(TransactionInput txInput : tx.getInputs()) {
+                            HashIndex hashIndex = new HashIndex(txInput.getOutpoint().getHash(), txInput.getOutpoint().getIndex());
+                            Script spentScript = getScriptPubKey(bitcoindService, hexFormat, hashIndex);
+                            if(spentScript != null && ScriptType.P2TR.isScriptType(spentScript)) {
+                                spentP2TROutpoints.add(hashIndex);
+                            }
+                            spentScriptPubKeys.put(hashIndex, spentScript);
+                        }
                     }
 
-                    byte[] tweak = SilentPaymentUtils.getTweak(tx, spentScriptPubKeys, false);
-                    if(tweak != null) {
-                        BlockTransaction blkTx = new BlockTransaction(tx.getTxId(), 0, null, 0L, tx, null);
-                        eligibleTransactions.put(blkTx, SilentPaymentUtils.getSecp256k1PubKey(tweak));
+                    if(containsTaprootOutput(tx, utxoMode ? utxoMinValue : 0)) {
+                        if(!utxoMode) {
+                            for(TransactionInput txInput : tx.getInputs()) {
+                                HashIndex hashIndex = new HashIndex(txInput.getOutpoint().getHash(), txInput.getOutpoint().getIndex());
+                                spentScriptPubKeys.put(hashIndex, getScriptPubKey(bitcoindService, hexFormat, hashIndex));
+                            }
+                        }
+
+                        byte[] tweak = SilentPaymentUtils.getTweak(tx, spentScriptPubKeys, false);
+                        if(tweak != null) {
+                            if(utxoMode) {
+                                // Filter outputs by value for UTXO mode
+                                Transaction filteredTx = filterOutputsByValue(tx, utxoMinValue);
+                                if(containsTaprootOutput(filteredTx, 0)) {
+                                    BlockTransaction blkTx = new BlockTransaction(filteredTx.getTxId(), 0, null, 0L, filteredTx, null);
+                                    eligibleTransactions.put(blkTx, SilentPaymentUtils.getSecp256k1PubKey(tweak));
+                                }
+                            } else {
+                                BlockTransaction blkTx = new BlockTransaction(tx.getTxId(), 0, null, 0L, tx, null);
+                                eligibleTransactions.put(blkTx, SilentPaymentUtils.getSecp256k1PubKey(tweak));
+                            }
+                        }
                     }
                 }
             } catch(JsonRpcException e) {
@@ -217,8 +284,18 @@ public class BitcoindClient {
         if(!removedTxids.isEmpty()) {
             mempoolIndex.removeFromIndex(removedTxids);
         }
+
+        // In UTXO mode, remove spent outputs
+        if(utxoMode && spentP2TROutpoints != null && !spentP2TROutpoints.isEmpty()) {
+            mempoolIndex.removeSpentUtxos(spentP2TROutpoints);
+        }
+
         if(!eligibleTransactions.isEmpty()) {
-            mempoolIndex.addToIndex(eligibleTransactions);
+            if(utxoMode) {
+                mempoolIndex.addUtxosToIndex(eligibleTransactions, utxoMinValue);
+            } else {
+                mempoolIndex.addToIndex(eligibleTransactions);
+            }
         }
 
         mempoolTxIds.removeAll(removedTxids);
@@ -394,15 +471,24 @@ public class BitcoindClient {
         }
     }
 
-    private static boolean containsTaprootOutput(Transaction tx) {
+    private static boolean containsTaprootOutput(Transaction tx, long minValue) {
         for(TransactionOutput txOutput : tx.getOutputs()) {
             ScriptType scriptType = getValidScriptType(txOutput.getScriptBytes());
-            if(scriptType == ScriptType.P2TR) {
+            if(scriptType == ScriptType.P2TR && txOutput.getValue() >= minValue) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static Transaction filterOutputsByValue(Transaction tx, long minValue) {
+        // Return the same transaction - the Index.addUtxosToIndex method will only add
+        // outputs that meet the criteria. We just need to ensure the transaction object
+        // is passed through. The actual filtering happens in addUtxosToIndex.
+        // However, for proper filtering we need to mark which outputs to include.
+        // Since Transaction is immutable, we pass the original and filter in addUtxosToIndex.
+        return tx;
     }
 
     private static ScriptType getValidScriptType(byte[] scriptPubKey) {

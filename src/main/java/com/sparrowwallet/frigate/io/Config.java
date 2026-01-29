@@ -1,6 +1,7 @@
 package com.sparrowwallet.frigate.io;
 
 import com.google.gson.*;
+import com.sparrowwallet.frigate.index.IndexMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +27,8 @@ public class Config {
     private boolean useCuda;
     private int cudaBatchSize = 300000;
     private Server backendElectrumServer;
+    private IndexMode indexMode;
+    private Long utxoMinValue;
 
     private static Config INSTANCE;
 
@@ -185,6 +188,24 @@ public class Config {
 
     public void setBackendElectrumServer(Server backendElectrumServer) {
         this.backendElectrumServer = backendElectrumServer;
+        flush();
+    }
+
+    public IndexMode getIndexMode() {
+        return indexMode == null ? IndexMode.FULL : indexMode;
+    }
+
+    public void setIndexMode(IndexMode indexMode) {
+        this.indexMode = indexMode;
+        flush();
+    }
+
+    public long getUtxoMinValue() {
+        return utxoMinValue == null ? 1000L : utxoMinValue;
+    }
+
+    public void setUtxoMinValue(Long utxoMinValue) {
+        this.utxoMinValue = utxoMinValue;
         flush();
     }
 

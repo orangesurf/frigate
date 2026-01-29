@@ -13,8 +13,10 @@ import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.drongo.silentpayments.SilentPaymentScanAddress;
 import com.sparrowwallet.frigate.Frigate;
 import com.sparrowwallet.frigate.bitcoind.*;
+import com.sparrowwallet.frigate.index.IndexMode;
 import com.sparrowwallet.frigate.index.IndexQuerier;
 import com.sparrowwallet.frigate.index.TxEntry;
+import com.sparrowwallet.frigate.io.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -441,6 +443,14 @@ public class ElectrumServerService {
         } catch(IllegalStateException e) {
             throw new BitcoindIOException(e);
         }
+    }
+
+    @JsonRpcMethod("blockchain.silentpayments.features")
+    public SilentPaymentsFeatures getSilentPaymentsFeatures() {
+        checkVersionNegotiated();
+        IndexMode mode = Config.get().getIndexMode();
+        long minValue = Config.get().getUtxoMinValue();
+        return new SilentPaymentsFeatures(mode.name(), minValue);
     }
 
     @JsonRpcMethod("blockchain.silentpayments.subscribe")

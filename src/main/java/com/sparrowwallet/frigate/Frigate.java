@@ -7,6 +7,7 @@ import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.frigate.electrum.ElectrumServerRunnable;
 import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
 import com.sparrowwallet.frigate.index.Index;
+import com.sparrowwallet.frigate.index.IndexMode;
 import com.sparrowwallet.frigate.index.IndexQuerier;
 import com.sparrowwallet.frigate.io.Config;
 import com.sparrowwallet.frigate.io.Storage;
@@ -44,9 +45,12 @@ public class Frigate {
 
         boolean useCuda = Config.get().isUseCuda();
         int cudaBatchSize = Config.get().getCudaBatchSize();
+        IndexMode indexMode = Config.get().getIndexMode();
 
-        blocksIndex = new Index(startHeight, false, useCuda, cudaBatchSize);
-        mempoolIndex = new Index(0, true, false, 0);
+        getLogger().info("Using index mode: " + indexMode);
+
+        blocksIndex = new Index(startHeight, false, useCuda, cudaBatchSize, indexMode);
+        mempoolIndex = new Index(0, true, false, 0, indexMode);
 
         Boolean startIndexing = Config.get().isStartIndexing();
         if(startIndexing == null) {
