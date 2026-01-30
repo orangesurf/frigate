@@ -6,6 +6,7 @@ import com.sparrowwallet.drongo.Drongo;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.frigate.electrum.ElectrumServerRunnable;
 import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
+import com.sparrowwallet.frigate.bitcoind.UtxoBootstrap;
 import com.sparrowwallet.frigate.index.Index;
 import com.sparrowwallet.frigate.index.IndexMode;
 import com.sparrowwallet.frigate.index.IndexQuerier;
@@ -27,12 +28,21 @@ public class Frigate {
 
     private static final EventBus EVENT_BUS = new EventBus();
 
+    private final Args args;
     private Index blocksIndex;
     private Index mempoolIndex;
     private BitcoindClient bitcoindClient;
     private ElectrumServerRunnable electrumServer;
 
     private boolean running;
+
+    public Frigate() {
+        this(new Args());
+    }
+
+    public Frigate(Args args) {
+        this.args = args;
+    }
 
     public void start() {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
@@ -48,6 +58,33 @@ public class Frigate {
         IndexMode indexMode = Config.get().getIndexMode();
 
         getLogger().info("Using index mode: " + indexMode);
+
+        // Handle bootstrap mode
+        if(args.bootstrap) {
+            if(indexMode != IndexMode.UTXO_ONLY) {
+                getLogger().error("Bootstrap mode requires UTXO_ONLY index mode. Current mode: " + indexMode);
+                getLogger().error("Set indexMode to UTXO_ONLY in your config file and try again.");
+                System.exit(1);
+            }
+
+            getLogger().info("Running in bootstrap mode...");
+
+            // Create a temporary BitcoindClient to get the service
+            blocksIndex = new Index(startHeight, false, useCuda, cudaBatchSize, indexMode);
+            BitcoindClient tempClient = new BitcoindClient(blocksIndex, null);
+
+            UtxoBootstrap bootstrap = new UtxoBootstrap(
+                    tempClient.getBitcoindService(),
+                    blocksIndex,
+                    Config.get().getUtxoMinValue()
+            );
+            bootstrap.run();
+
+            getLogger().info("Bootstrap complete. Exiting.");
+            blocksIndex.close();
+            blocksIndex = null;  // Prevent double-close in shutdown hook
+            System.exit(0);
+        }
 
         blocksIndex = new Index(startHeight, false, useCuda, cudaBatchSize, indexMode);
         mempoolIndex = new Index(0, true, false, 0, indexMode);
@@ -155,7 +192,7 @@ public class Frigate {
             getLogger().info("Using " + Network.get() + " configuration");
         }
 
-        Frigate frigate = new Frigate();
+        Frigate frigate = new Frigate(args);
         frigate.start();
     }
 }

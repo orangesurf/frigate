@@ -29,6 +29,7 @@ public class Config {
     private Server backendElectrumServer;
     private IndexMode indexMode;
     private Long utxoMinValue;
+    private Integer lastIndexedBlockHeight;
 
     private static Config INSTANCE;
 
@@ -206,6 +207,15 @@ public class Config {
 
     public void setUtxoMinValue(Long utxoMinValue) {
         this.utxoMinValue = utxoMinValue;
+        flush();
+    }
+
+    public Integer getLastIndexedBlockHeight() {
+        return lastIndexedBlockHeight;
+    }
+
+    public void setLastIndexedBlockHeight(Integer lastIndexedBlockHeight) {
+        this.lastIndexedBlockHeight = lastIndexedBlockHeight;
         flush();
     }
 

@@ -87,10 +87,22 @@ public class Index {
     }
 
     public int getLastBlockIndexed() {
+        // Check persisted height from Config (set by bootstrap or previous indexing)
+        Integer configHeight = Config.get().getLastIndexedBlockHeight();
+        if (configHeight != null && configHeight > lastBlockIndexed) {
+            lastBlockIndexed = configHeight;
+        }
+
+        // For UTXO_ONLY mode, Config is authoritative
+        // (MAX(height) in UTXO table is creation height, not the height we've indexed up to)
+        if (indexMode == IndexMode.UTXO_ONLY) {
+            return lastBlockIndexed;
+        }
+
+        // For FULL mode, also check database MAX(height)
         try {
-            String table = (indexMode == IndexMode.UTXO_ONLY) ? UTXO_TABLE : TWEAK_TABLE;
             return dbManager.executeRead(connection -> {
-                try(PreparedStatement statement = connection.prepareStatement("SELECT MAX(height) from " + table)) {
+                try(PreparedStatement statement = connection.prepareStatement("SELECT MAX(height) from " + TWEAK_TABLE)) {
                     ResultSet resultSet = statement.executeQuery();
                     return resultSet.next() ? Math.max(lastBlockIndexed, resultSet.getInt(1)) : lastBlockIndexed;
                 }
@@ -202,6 +214,12 @@ public class Index {
                 Frigate.getEventBus().post(new SilentPaymentsMempoolIndexAdded(transactions.keySet().stream().map(blkTx -> blkTx.getTransaction().getTxId()).collect(Collectors.toSet())));
             } else {
                 Frigate.getEventBus().post(new SilentPaymentsBlocksIndexUpdate(fromBlockHeight + 1, lastBlockIndexed, transactions.size()));
+
+                // Persist the indexed height to Config for UTXO_ONLY mode
+                Integer currentConfig = Config.get().getLastIndexedBlockHeight();
+                if (currentConfig == null || lastBlockIndexed > currentConfig) {
+                    Config.get().setLastIndexedBlockHeight(lastBlockIndexed);
+                }
             }
         } catch(Exception e) {
             log.error("Error adding UTXOs to index", e);
