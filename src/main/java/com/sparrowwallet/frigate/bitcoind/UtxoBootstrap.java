@@ -104,6 +104,15 @@ public class UtxoBootstrap {
                 return new DumpTxOutSetResult(0, null, 0, snapshotFile.getAbsolutePath(), null, 0);
             }
 
+            // Ensure parent directory exists
+            File parentDir = snapshotFile.getParentFile();
+            if (parentDir != null && !parentDir.exists()) {
+                if (!parentDir.mkdirs()) {
+                    log.error("Failed to create directory: {}", parentDir.getAbsolutePath());
+                    return null;
+                }
+            }
+
             log.info("Calling dumptxoutset to: {}", snapshotFile.getAbsolutePath());
             log.info("This operation can take 5-15 minutes depending on UTXO set size...");
 
