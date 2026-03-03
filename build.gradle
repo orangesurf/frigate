@@ -20,7 +20,7 @@ tasks.withType(AbstractArchiveTask).configureEach {
 
 dependencies {
     implementation(project(':drongo'))
-    implementation('org.duckdb:duckdb_jdbc:1.4.1.0')
+    implementation('org.duckdb:duckdb_jdbc:1.4.4.0')
     implementation("com.zaxxer:HikariCP:7.0.2")
     implementation('com.google.guava:guava:33.5.0-jre')
     implementation('com.google.code.gson:gson:2.9.1')
@@ -47,7 +47,15 @@ application {
     mainClass = 'com.sparrowwallet.frigate.Frigate'
 
     applicationDefaultJvmArgs = ["-XX:+HeapDumpOnOutOfMemoryError",
-                                 "--enable-native-access=org.duckdb.duckdb_jdbc"]
+                                 "--enable-native-access=duckdb.jdbc"]
+}
+
+tasks.register('runCli', JavaExec) {
+    mainModule = 'com.sparrowwallet.frigate'
+    mainClass = 'com.sparrowwallet.frigate.cli.FrigateCli'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs = ["-XX:+HeapDumpOnOutOfMemoryError",
+               "--enable-native-access=duckdb.jdbc"]
 }
 
 jlink {
@@ -59,7 +67,7 @@ jlink {
     options = ['--strip-native-commands', '--strip-java-debug-attributes', '--compress', 'zip-6', '--no-header-files', '--no-man-pages', '--ignore-signing-information', '--exclude-files', '**.png', '--exclude-resources', 'glob:/com.sparrowwallet.merged.module/META-INF/*']
     launcher {
         name = 'frigate'
-        jvmArgs = ["--enable-native-access=org.duckdb.duckdb_jdbc"]
+        jvmArgs = ["--enable-native-access=duckdb.jdbc"]
     }
     secondaryLauncher {
         name = 'frigate-cli'
@@ -124,10 +132,6 @@ tasks.register('packageTarDistribution', Tar) {
 }
 
 extraJavaModuleInfo {
-    module('org.duckdb:duckdb_jdbc', 'org.duckdb.duckdb_jdbc') {
-        exports('org.duckdb')
-        requires('java.sql')
-    }
     module('com.github.arteam:simple-json-rpc-core', 'simple.json.rpc.core') {
         exports('com.github.arteam.simplejsonrpc.core.annotation')
         exports('com.github.arteam.simplejsonrpc.core.domain')
