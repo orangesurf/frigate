@@ -72,6 +72,7 @@ jlink {
     secondaryLauncher {
         name = 'frigate-cli'
         mainClass = 'com.sparrowwallet.frigate.cli.FrigateCli'
+        jvmArgs = ["--enable-native-access=duckdb.jdbc"]
     }
     jpackage {
         imageName = os.isMacOsX() ? 'Frigate' : 'frigate'
@@ -132,6 +133,10 @@ tasks.register('packageTarDistribution', Tar) {
 }
 
 extraJavaModuleInfo {
+    module('org.duckdb:duckdb_jdbc', 'duckdb.jdbc') {
+        exports('org.duckdb')
+        requires('java.sql')
+    }
     module('com.github.arteam:simple-json-rpc-core', 'simple.json.rpc.core') {
         exports('com.github.arteam.simplejsonrpc.core.annotation')
         exports('com.github.arteam.simplejsonrpc.core.domain')
