@@ -15,10 +15,8 @@ import java.util.Properties;
 
 public abstract class AbstractDbManager implements DbManager {
     private static final Logger log = LoggerFactory.getLogger(AbstractDbManager.class);
-    private final boolean useCuda;
 
-    public AbstractDbManager(boolean useCuda) {
-        this.useCuda = useCuda;
+    public AbstractDbManager() {
     }
 
     protected Connection createWriteConnection(String connectionUrl) throws SQLException {
@@ -65,13 +63,9 @@ public abstract class AbstractDbManager implements DbManager {
             sql.append("SET ").append(propertyName).append(" = '").append(value).append("'; ");
         }
 
-        File secp256k1ExtensionFile = Storage.getSecp256k1ExtensionFile();
-        sql.append("LOAD '").append(secp256k1ExtensionFile.getAbsolutePath()).append("'; ");
-
-        if(useCuda) {
-            File cudaspExtensionFile = Storage.getCudaspExtensionFile();
-            sql.append("LOAD '").append(cudaspExtensionFile.getAbsolutePath()).append("'; ");
-        }
+        File ufsecpExtensionFile = Storage.getUfsecpExtensionFile();
+        sql.append("LOAD '").append(ufsecpExtensionFile.getAbsolutePath()).append("'; ");
+        sql.append("SELECT ufsecp_set_cache_dir('").append(Storage.getFrigateCacheDir().getAbsolutePath()).append("'); ");
 
         return sql.toString().trim();
     }

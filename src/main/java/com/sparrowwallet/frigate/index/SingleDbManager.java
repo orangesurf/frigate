@@ -24,8 +24,8 @@ public class SingleDbManager extends AbstractDbManager {
     private volatile boolean shutdown = false;
     private volatile boolean writeOperationActive = false;
 
-    public SingleDbManager(String connectionUrl, boolean useCuda) {
-        super(useCuda);
+    public SingleDbManager(String connectionUrl) {
+        super();
         this.connectionUrl = connectionUrl;
         this.rwLock = new ReentrantReadWriteLock(true);
         this.writerWaiting = new Semaphore(1);

@@ -69,9 +69,9 @@ public class MemoryDbManager implements DbManager {
 
         connection = DriverManager.getConnection(DbManager.DB_PREFIX + "memory:", duckDbProperties);
 
-        File secp256k1ExtensionFile = Storage.getSecp256k1ExtensionFile();
+        File ufsecpExtensionFile = Storage.getUfsecpExtensionFile();
         try(Statement statement = connection.createStatement()) {
-            statement.execute("LOAD '" + secp256k1ExtensionFile.getAbsolutePath() + "';");
+            statement.execute("LOAD '" + ufsecpExtensionFile.getAbsolutePath() + "';");
         }
     }
 }

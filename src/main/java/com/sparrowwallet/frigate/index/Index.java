@@ -37,13 +37,11 @@ public class Index {
 
     private final DbManager dbManager;
     private volatile int lastBlockIndexed = -1;
-    private final boolean useCuda;
-    private final int cudaBatchSize;
+    private final int batchSize;
 
-    public Index(int startHeight, boolean inMemory, boolean useCuda, int cudaBatchSize) {
+    public Index(int startHeight, boolean inMemory, int batchSize) {
         lastBlockIndexed = Math.max(lastBlockIndexed, startHeight - 1);
-        this.useCuda = useCuda;
-        this.cudaBatchSize = cudaBatchSize;
+        this.batchSize = batchSize;
 
         if(inMemory) {
             dbManager = new MemoryDbManager();
@@ -51,12 +49,12 @@ public class Index {
             String dbUrl = Config.get().getDbUrl();
             List<String> readDbUrls = Config.get().getReadDbUrls();
             if(dbUrl != null && readDbUrls != null && !readDbUrls.isEmpty()) {
-                dbManager = new ScalingDbManager(dbUrl, readDbUrls, useCuda);
+                dbManager = new ScalingDbManager(dbUrl, readDbUrls);
             } else if(dbUrl == null) {
                 File dbFile = new File(Storage.getFrigateDbDir(), DEFAULT_DB_FILENAME);
-                dbManager = new SingleDbManager(DbManager.DB_PREFIX + dbFile.getAbsolutePath(), useCuda);
+                dbManager = new SingleDbManager(DbManager.DB_PREFIX + dbFile.getAbsolutePath());
             } else {
-                dbManager = new SingleDbManager(dbUrl, useCuda);
+                dbManager = new SingleDbManager(dbUrl);
             }
         }
 
@@ -281,70 +279,43 @@ public class Index {
 
     private String getSql(SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight) {
         String labelsStr = "[" + String.join(", ", Collections.nCopies(subscription.labels().length, "?")) + "]";
-        if(useCuda) {
-            String sql = "SELECT txid, tweak_key, height FROM cudasp_scan((SELECT txid, height, tweak_key, outputs FROM " + TWEAK_TABLE;
 
-            if(startHeight != null || endHeight != null) {
-                sql += " WHERE ";
-            }
+        String sql = "SELECT txid, tweak_key, height FROM ufsecp_scan((SELECT txid, height, tweak_key, outputs FROM " + TWEAK_TABLE;
 
-            if(startHeight != null) {
-                sql += "height >= ?";
-                if(endHeight != null) {
-                    sql += " AND ";
-                }
-            }
-
-            if(endHeight != null) {
-                sql += "height <= ?";
-            }
-
-            sql += "), ?, ?, " + labelsStr + ", batch_size := ?) ORDER BY height";
-
-            return sql;
-        } else {
-            String sql = "SELECT txid, tweak_key, height FROM " + TWEAK_TABLE +
-                    " WHERE scan_silent_payments(outputs, [?, ?, tweak_key], " + labelsStr + ")";
-
-            if(startHeight != null) {
-                sql += " AND height >= ?";
-            }
-            if(endHeight != null) {
-                sql += " AND height <= ?";
-            }
-
-            return sql;
+        if(startHeight != null || endHeight != null) {
+            sql += " WHERE ";
         }
+
+        if(startHeight != null) {
+            sql += "height >= ?";
+            if(endHeight != null) {
+                sql += " AND ";
+            }
+        }
+
+        if(endHeight != null) {
+            sql += "height <= ?";
+        }
+
+        sql += "), ?, ?, " + labelsStr + ", batch_size := ?) ORDER BY height";
+
+        return sql;
     }
 
     private void bindParameters(DuckDBPreparedStatement statement, SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight) throws SQLException {
         int index = 1;
-        if(useCuda) {
-            if(startHeight != null) {
-                statement.setInt(index++, startHeight);
-            }
-            if(endHeight != null) {
-                statement.setInt(index++, endHeight);
-            }
-            statement.setBytes(index++, Utils.reverseBytes(scanAddress.getScanKey().getPrivKeyBytes()));
-            statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
-            for(Integer label : subscription.labels()) {
-                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getLabelledTweakKey(label)));
-            }
-            statement.setInt(index, cudaBatchSize);
-        } else {
-            statement.setBytes(index++, scanAddress.getScanKey().getPrivKeyBytes());
-            statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
-            for(Integer label : subscription.labels()) {
-                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getLabelledTweakKey(label)));
-            }
-            if(startHeight != null) {
-                statement.setInt(index++, startHeight);
-            }
-            if(endHeight != null) {
-                statement.setInt(index, endHeight);
-            }
+        if(startHeight != null) {
+            statement.setInt(index++, startHeight);
         }
+        if(endHeight != null) {
+            statement.setInt(index++, endHeight);
+        }
+        statement.setBytes(index++, Utils.reverseBytes(scanAddress.getScanKey().getPrivKeyBytes()));
+        statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
+        for(Integer label : subscription.labels()) {
+            statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getLabelledTweakKey(label)));
+        }
+        statement.setInt(index, batchSize);
     }
 
     private static boolean isUnsubscribed(SilentPaymentScanAddress scanAddress, WeakReference<SubscriptionStatus> subscriptionStatusRef) {

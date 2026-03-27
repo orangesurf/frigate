@@ -42,11 +42,10 @@ public class Frigate {
             Config.get().setIndexStartHeight(startHeight);
         }
 
-        boolean useCuda = Config.get().isUseCuda();
-        int cudaBatchSize = Config.get().getCudaBatchSize();
+        int batchSize = Config.get().getBatchSize();
 
-        blocksIndex = new Index(startHeight, false, useCuda, cudaBatchSize);
-        mempoolIndex = new Index(0, true, false, 0);
+        blocksIndex = new Index(startHeight, false, batchSize);
+        mempoolIndex = new Index(0, true, batchSize);
 
         Boolean startIndexing = Config.get().isStartIndexing();
         if(startIndexing == null) {

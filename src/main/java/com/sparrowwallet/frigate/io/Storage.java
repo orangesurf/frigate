@@ -23,15 +23,10 @@ public class Storage {
     public static final String FRIGATE_DIR = ".frigate";
     public static final String WINDOWS_FRIGATE_DIR = "Frigate";
 
-    public static final String SECP256K1_EXTENSION_FILENAME = "secp256k1.duckdb_extension";
-    public static final String CUDASP_EXTENSION_FILENAME = "cudasp.duckdb_extension";
+    public static final String UFSECP_EXTENSION_FILENAME = "ufsecp.duckdb_extension";
 
-    public static File getSecp256k1ExtensionFile() {
-        return getExtensionFile(SECP256K1_EXTENSION_FILENAME);
-    }
-
-    public static File getCudaspExtensionFile() {
-        return getExtensionFile(CUDASP_EXTENSION_FILENAME);
+    public static File getUfsecpExtensionFile() {
+        return getExtensionFile(UFSECP_EXTENSION_FILENAME);
     }
 
     public static File getExtensionFile(String extensionFileName) {
@@ -50,7 +45,7 @@ public class Storage {
             resourcePath = "/native/linux/amd64/" + extensionFileName;
         }
 
-        File extensionFile = new File(getFrigateDbDir(), extensionFileName);
+        File extensionFile = new File(getFrigateCacheDir(), extensionFileName);
 
         try(InputStream is = Storage.class.getResourceAsStream(resourcePath)) {
             if(is == null) {
@@ -71,6 +66,14 @@ public class Storage {
             createOwnerOnlyDirectory(dbDir);
         }
         return dbDir;
+    }
+
+    public static File getFrigateCacheDir() {
+        File cacheDir = new File(getFrigateDir(), "cache");
+        if(!cacheDir.exists()) {
+            createOwnerOnlyDirectory(cacheDir);
+        }
+        return cacheDir;
     }
 
     public static File getFrigateDir() {

@@ -444,14 +444,15 @@ public class ElectrumServerService {
     }
 
     @JsonRpcMethod("blockchain.silentpayments.subscribe")
-    public String subscribeSilentPayments(@JsonRpcParam("scan_private_key") String scanPrivateKey, @JsonRpcParam("spend_public_key") String spendPublicKey, @JsonRpcParam("start") @JsonRpcOptional Long start, @JsonRpcParam("labels") @JsonRpcOptional Integer[] labels) {
+    public String subscribeSilentPayments(@JsonRpcParam("scan_private_key") String scanPrivateKey, @JsonRpcParam("spend_public_key") String spendPublicKey, @JsonRpcParam("start") @JsonRpcOptional Object start, @JsonRpcParam("labels") @JsonRpcOptional Integer[] labels) {
         checkVersionNegotiated();
         SilentPaymentScanAddress silentPaymentScanAddress = getSilentPaymentScanAddress(scanPrivateKey, spendPublicKey);
         Set<Integer> labelSet = getLabels(labels);
         requestHandler.subscribeSilentPaymentsAddress(silentPaymentScanAddress, labelSet);
 
-        int startHeight = getStartHeight(start);
-        indexQuerier.startHistoryScan(silentPaymentScanAddress, startHeight, null, labelSet, new WeakReference<>(requestHandler));
+        int[] heightRange = getHeightRange(start);
+        Integer endHeight = heightRange.length > 1 ? heightRange[1] : null;
+        indexQuerier.startHistoryScan(silentPaymentScanAddress, heightRange[0], endHeight, labelSet, new WeakReference<>(requestHandler));
 
         return silentPaymentScanAddress.getAddress();
     }
@@ -471,19 +472,25 @@ public class ElectrumServerService {
         return SilentPaymentScanAddress.from(scanKey, spendKey);
     }
 
-    private int getStartHeight(Long start) {
+    private int[] getHeightRange(Object start) {
+        if(start instanceof String s && s.contains("-")) {
+            String[] parts = s.split("-", 2);
+            return new int[] { Integer.parseInt(parts[0]), Integer.parseInt(parts[1]) };
+        }
+
+        Long startLong = start instanceof Number n ? n.longValue() : null;
         int startHeight = 0;
-        if(start != null) {
-            if(start > Transaction.MAX_BLOCK_LOCKTIME) {
+        if(startLong != null) {
+            if(startLong > Transaction.MAX_BLOCK_LOCKTIME) {
                 if(bitcoindClient == null) {
                     throw new UnsupportedOperationException("Use a start block height instead of a timestamp when coreServer is not configured");
                 }
-                startHeight = bitcoindClient.findBlockByTimestamp(start);
-            } else if(start > 0) {
-                startHeight = start.intValue();
+                startHeight = bitcoindClient.findBlockByTimestamp(startLong);
+            } else if(startLong > 0) {
+                startHeight = startLong.intValue();
             }
         }
-        return startHeight;
+        return new int[] { startHeight };
     }
 
     private Set<Integer> getLabels(Integer[] labels) {

@@ -19,8 +19,8 @@ public class ScalingDbManager extends AbstractDbManager {
     private final AtomicInteger index = new AtomicInteger(0);
     private boolean shutdown = false;
 
-    public ScalingDbManager(String readWriteUrl, List<String> readOnlyUrls, boolean useCuda) {
-        super(useCuda);
+    public ScalingDbManager(String readWriteUrl, List<String> readOnlyUrls) {
+        super();
         this.readWriteUrl = readWriteUrl;
         for(String url : readOnlyUrls) {
             HikariDataSource ds = createReadDataSource(url, 1);

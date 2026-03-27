@@ -23,8 +23,7 @@ public class Config {
     private Integer dbThreads;
     private String dbUrl;
     private List<String> readDbUrls;
-    private boolean useCuda;
-    private int cudaBatchSize = 300000;
+    private int batchSize = 300000;
     private Server backendElectrumServer;
 
     private static Config INSTANCE;
@@ -161,21 +160,12 @@ public class Config {
         flush();
     }
 
-    public boolean isUseCuda() {
-        return useCuda;
+    public int getBatchSize() {
+        return batchSize;
     }
 
-    public void setUseCuda(boolean useCuda) {
-        this.useCuda = useCuda;
-        flush();
-    }
-
-    public int getCudaBatchSize() {
-        return cudaBatchSize;
-    }
-
-    public void setCudaBatchSize(int cudaBatchSize) {
-        this.cudaBatchSize = cudaBatchSize;
+    public void setBatchSize(int batchSize) {
+        this.batchSize = batchSize;
         flush();
     }
 
