@@ -24,6 +24,7 @@ public class Config {
     private String dbUrl;
     private List<String> readDbUrls;
     private int batchSize = 300000;
+    private ComputeBackend computeBackend;
     private Server backendElectrumServer;
 
     private static Config INSTANCE;
@@ -166,6 +167,15 @@ public class Config {
 
     public void setBatchSize(int batchSize) {
         this.batchSize = batchSize;
+        flush();
+    }
+
+    public ComputeBackend getComputeBackend() {
+        return computeBackend != null ? computeBackend : ComputeBackend.AUTO;
+    }
+
+    public void setComputeBackend(ComputeBackend computeBackend) {
+        this.computeBackend = computeBackend;
         flush();
     }
 

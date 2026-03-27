@@ -12,6 +12,7 @@ import com.sparrowwallet.frigate.Frigate;
 import com.sparrowwallet.frigate.SubscriptionStatus;
 import com.sparrowwallet.frigate.electrum.SilentPaymentsNotification;
 import com.sparrowwallet.frigate.electrum.SilentPaymentsSubscription;
+import com.sparrowwallet.frigate.io.ComputeBackend;
 import com.sparrowwallet.frigate.io.Config;
 import com.sparrowwallet.frigate.io.Storage;
 import org.duckdb.DuckDBAppender;
@@ -66,6 +67,33 @@ public class Index {
             });
         } catch(Exception e) {
             throw new ConfigurationException("Error initialising index", e);
+        }
+
+        if(!inMemory) {
+            checkGpuBackend();
+        }
+    }
+
+    private void checkGpuBackend() {
+        ComputeBackend computeBackend = Config.get().getComputeBackend();
+        if(computeBackend == ComputeBackend.CPU) {
+            return;
+        }
+
+        try {
+            String backend = dbManager.executeRead(connection -> {
+                try(Statement stmt = connection.createStatement(); ResultSet rs = stmt.executeQuery("SELECT ufsecp_backend()")) {
+                    return rs.next() ? rs.getString(1) : "unknown";
+                }
+            });
+
+            if(backend.startsWith("cpu")) {
+                log.warn("No GPU detected, using CPU backend for scanning. Set \"computeBackend\": \"CPU\" in config to suppress this warning.");
+            } else {
+                log.info("Using {} backend for scanning", backend);
+            }
+        } catch(Exception e) {
+            log.warn("Could not detect GPU backend", e);
         }
     }
 
@@ -297,7 +325,14 @@ public class Index {
             sql += "height <= ?";
         }
 
-        sql += "), ?, ?, " + labelsStr + ", batch_size := ?) ORDER BY height";
+        sql += "), ?, ?, " + labelsStr + ", batch_size := ?";
+
+        ComputeBackend computeBackend = Config.get().getComputeBackend();
+        if(computeBackend != ComputeBackend.AUTO) {
+            sql += ", backend := ?";
+        }
+
+        sql += ") ORDER BY height";
 
         return sql;
     }
@@ -315,7 +350,12 @@ public class Index {
         for(Integer label : subscription.labels()) {
             statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getLabelledTweakKey(label)));
         }
-        statement.setInt(index, batchSize);
+        statement.setInt(index++, batchSize);
+
+        ComputeBackend computeBackend = Config.get().getComputeBackend();
+        if(computeBackend != ComputeBackend.AUTO) {
+            statement.setString(index, computeBackend.toSqlValue());
+        }
     }
 
     private static boolean isUnsubscribed(SilentPaymentScanAddress scanAddress, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
