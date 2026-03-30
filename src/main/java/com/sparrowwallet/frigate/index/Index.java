@@ -18,7 +18,6 @@ import com.sparrowwallet.frigate.io.Storage;
 import org.duckdb.DuckDBAppender;
 import org.duckdb.DuckDBConnection;
 import org.duckdb.DuckDBPreparedStatement;
-import org.duckdb.QueryProgress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -88,12 +87,36 @@ public class Index {
             });
 
             if(backend.startsWith("cpu")) {
+                if(computeBackend == ComputeBackend.GPU) {
+                    throw new ConfigurationException("No GPU detected, but \"computeBackend\" is set to \"GPU\". Set to \"AUTO\" or \"CPU\", or install a supported GPU.");
+                }
                 log.warn("No GPU detected, using CPU backend for scanning. Set \"computeBackend\": \"CPU\" in config to suppress this warning.");
             } else {
                 log.info("Using {} backend for scanning", backend);
             }
         } catch(Exception e) {
             log.warn("Could not detect GPU backend", e);
+        }
+    }
+
+    private double pollScanProgress(byte[] scanKeyBytes) {
+        try {
+            return dbManager.executeRead(progressConnection -> {
+                try(PreparedStatement progressStmt = progressConnection.prepareStatement("SELECT ufsecp_progress(?)")) {
+                    progressStmt.setBytes(1, scanKeyBytes);
+                    ResultSet rs = progressStmt.executeQuery();
+                    if(rs.next()) {
+                        double pct = rs.getDouble(1);
+                        if(pct < 0.0d) {
+                            return 0.0d;
+                        }
+                        return Math.min(pct / 100.0d, 1.0d);
+                    }
+                    return 0.0d;
+                }
+            });
+        } catch(Exception e) {
+            return 0.0d;
         }
     }
 
@@ -210,7 +233,7 @@ public class Index {
 
     public List<TxEntry> getHistoryAsync(SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight, WeakReference<SubscriptionStatus> subscriptionStatusRef) {
         ConcurrentLinkedQueue<TxEntry> queue = new ConcurrentLinkedQueue<>();
-        AtomicLong rowsProcessedStart = new AtomicLong(0L);
+        byte[] scanKeyBytes = Utils.reverseBytes(scanAddress.getScanKey().getPrivKeyBytes());
 
         try {
             dbManager.executeRead(connection -> {
@@ -237,18 +260,7 @@ public class Index {
                                     return;
                                 }
 
-                                QueryProgress queryProgress = statement.getQueryProgress();
-                                if(queryProgress.getRowsProcessed() == queryProgress.getTotalRowsToProcess()) {
-                                    return;
-                                }
-
-                                double progress = 0.0d;
-                                if(rowsProcessedStart.get() == 0L && queryProgress.getRowsProcessed() > 0) {
-                                    rowsProcessedStart.set(queryProgress.getRowsProcessed());
-                                }
-                                if(rowsProcessedStart.get() > 0L) {
-                                    progress = (queryProgress.getRowsProcessed() - rowsProcessedStart.get()) / (double)(queryProgress.getTotalRowsToProcess() - rowsProcessedStart.get());
-                                }
+                                double progress = pollScanProgress(scanKeyBytes);
 
                                 List<TxEntry> history = new ArrayList<>();
                                 TxEntry entry;
@@ -263,7 +275,7 @@ public class Index {
                                     Frigate.getEventBus().post(new SilentPaymentsNotification(subscription, progress, new ArrayList<>(history), subscriptionStatusRef.get()));
                                     history.clear();
                                 }
-                            } catch(SQLException e) {
+                            } catch(Exception e) {
                                 log.error("Error getting query progress", e);
                             }
                         }, 1, 1, TimeUnit.SECONDS);

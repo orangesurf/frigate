@@ -10,6 +10,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.util.zip.GZIPInputStream;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
@@ -47,12 +48,21 @@ public class Storage {
 
         File extensionFile = new File(getFrigateCacheDir(), extensionFileName);
 
-        try(InputStream is = Storage.class.getResourceAsStream(resourcePath)) {
-            if(is == null) {
-                throw new IOException("Could not find " + extensionFileName + " for the current platform: " + osName + " " + osArch);
+        try {
+            InputStream is = Storage.class.getResourceAsStream(resourcePath);
+            if(is != null) {
+                try(is) {
+                    Files.copy(is, extensionFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                }
+            } else {
+                InputStream gzIs = Storage.class.getResourceAsStream(resourcePath + ".gz");
+                if(gzIs == null) {
+                    throw new IOException("Could not find " + extensionFileName + " for the current platform: " + osName + " " + osArch);
+                }
+                try(GZIPInputStream decompressed = new GZIPInputStream(gzIs)) {
+                    Files.copy(decompressed, extensionFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                }
             }
-
-            Files.copy(is, extensionFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         } catch(IOException e) {
             log.error("Error loading " + extensionFileName, e);
         }
