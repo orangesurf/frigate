@@ -90,7 +90,7 @@ public class Index {
                 if(computeBackend == ComputeBackend.GPU) {
                     throw new ConfigurationException("No GPU detected, but \"computeBackend\" is set to \"GPU\". Set to \"AUTO\" or \"CPU\", or install a supported GPU.");
                 }
-                log.warn("No GPU detected, using CPU backend for scanning. Set \"computeBackend\": \"CPU\" in config to suppress this warning.");
+                log.info("Using CPU backend for scanning (no GPU detected)");
             } else {
                 log.info("Using {} backend for scanning", backend);
             }
