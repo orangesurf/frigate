@@ -26,8 +26,13 @@ public class Storage {
 
     public static final String UFSECP_EXTENSION_FILENAME = "ufsecp.duckdb_extension";
 
-    public static File getUfsecpExtensionFile() {
-        return getExtensionFile(UFSECP_EXTENSION_FILENAME);
+    private static File ufsecpExtensionFile;
+
+    public static synchronized File getUfsecpExtensionFile() {
+        if(ufsecpExtensionFile == null) {
+            ufsecpExtensionFile = getExtensionFile(UFSECP_EXTENSION_FILENAME);
+        }
+        return ufsecpExtensionFile;
     }
 
     public static File getExtensionFile(String extensionFileName) {
