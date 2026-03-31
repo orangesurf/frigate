@@ -192,9 +192,17 @@ public class RequestHandler implements Runnable, SubscriptionStatus, Thread.Unca
             subscription.setHighestBlockHeight(notification.history().stream().mapToInt(TxEntry::getHeight).max().orElse(subscription.getHighestBlockHeight()));
             subscription.getMempoolTxids().addAll(notification.history().stream().filter(txEntry -> txEntry.height <= 0).map(txEntry -> Sha256Hash.wrap(txEntry.tx_hash)).collect(Collectors.toSet()));
 
-            ElectrumNotificationTransport electrumNotificationTransport = new ElectrumNotificationTransport(clientSocket);
-            JsonRpcClient jsonRpcClient = new JsonRpcClient(electrumNotificationTransport);
-            jsonRpcClient.onDemand(ElectrumNotificationService.class).notifySilentPayments(notification.subscription(), notification.progress(), notification.history());
+            try {
+                ElectrumNotificationTransport electrumNotificationTransport = new ElectrumNotificationTransport(clientSocket);
+                JsonRpcClient jsonRpcClient = new JsonRpcClient(electrumNotificationTransport);
+                jsonRpcClient.onDemand(ElectrumNotificationService.class).notifySilentPayments(notification.subscription(), notification.progress(), notification.history());
+            } catch(IllegalStateException e) {
+                if(e.getCause() instanceof java.io.IOException) {
+                    log.debug("Client disconnected before notification could be sent");
+                } else {
+                    throw e;
+                }
+            }
         }
     }
 

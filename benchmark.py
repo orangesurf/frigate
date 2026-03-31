@@ -102,9 +102,10 @@ def format_number(n):
     return f"{n:,}"
 
 
-def run_benchmarks(host, port, end_height, markdown, clients):
+def run_benchmarks(host, port, end_height, markdown, clients, max_periods=0):
+    period_list = PERIODS[:max_periods] if max_periods > 0 else PERIODS
     periods = []
-    for desc, short, blocks in PERIODS:
+    for desc, short, blocks in period_list:
         start = end_height - blocks
         txns = TRANSACTION_COUNTS.get(short) if end_height == DEFAULT_END_HEIGHT else None
         periods.append((desc, short, blocks, start, f"{start}-{end_height}", txns))
@@ -186,10 +187,11 @@ def main():
     parser.add_argument("--end-height", type=int, default=DEFAULT_END_HEIGHT, help=f"end block height (default: {DEFAULT_END_HEIGHT})")
     parser.add_argument("--markdown", action="store_true", help="output as markdown table")
     parser.add_argument("--clients", type=int, default=1, help="number of concurrent clients per scan period (default: 1)")
+    parser.add_argument("--periods", type=int, default=0, help="number of periods to run (default: all)")
     args = parser.parse_args()
 
     try:
-        run_benchmarks(args.host, args.port, args.end_height, args.markdown, args.clients)
+        run_benchmarks(args.host, args.port, args.end_height, args.markdown, args.clients, args.periods)
     except ConnectionRefusedError:
         print(f"Error: could not connect to {args.host}:{args.port}", file=sys.stderr)
         sys.exit(1)

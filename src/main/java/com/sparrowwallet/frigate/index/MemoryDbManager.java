@@ -13,13 +13,13 @@ import java.sql.Statement;
 import java.util.Properties;
 
 public class MemoryDbManager implements DbManager {
-    private final static Logger log = LoggerFactory.getLogger(ScalingDbManager.class);
+    private final static Logger log = LoggerFactory.getLogger(MemoryDbManager.class);
 
     private Connection connection;
     private boolean shutdown = false;
 
     @Override
-    public <T> T executeRead(ReadOperation<T> operation) throws SQLException {
+    public synchronized <T> T executeRead(ReadOperation<T> operation) throws SQLException {
         if(shutdown) {
             throw new SQLException("Connection manager is shutting down");
         }
@@ -29,7 +29,7 @@ public class MemoryDbManager implements DbManager {
     }
 
     @Override
-    public <T> T executeWrite(WriteOperation<T> operation) throws SQLException {
+    public synchronized <T> T executeWrite(WriteOperation<T> operation) throws SQLException {
         if(shutdown) {
             throw new SQLException("Connection manager is shutting down");
         }

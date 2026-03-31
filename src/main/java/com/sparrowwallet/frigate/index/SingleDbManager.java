@@ -1,6 +1,5 @@
 package com.sparrowwallet.frigate.index;
 
-import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,7 +18,7 @@ public class SingleDbManager extends AbstractDbManager {
     private final Semaphore writerWaiting;
 
     private Connection writeConnection;
-    private HikariDataSource readDataSource;
+    private DuckDBReadPool readPool;
     private boolean inWriteMode;
     private volatile boolean shutdown = false;
     private volatile boolean writeOperationActive = false;
@@ -50,12 +49,15 @@ public class SingleDbManager extends AbstractDbManager {
         }
 
         rwLock.readLock().lock();
+        Connection conn = null;
         try {
             ensureReadMode();
-            try(Connection conn = readDataSource.getConnection()) {
-                return operation.execute(conn);
-            }
+            conn = readPool.getConnection();
+            return operation.execute(conn);
         } finally {
+            if(conn != null) {
+                readPool.releaseConnection(conn);
+            }
             rwLock.readLock().unlock();
         }
     }
@@ -93,11 +95,11 @@ public class SingleDbManager extends AbstractDbManager {
     }
 
     private synchronized void ensureReadMode() throws SQLException {
-        if(inWriteMode || readDataSource == null) {
+        if(inWriteMode || readPool == null) {
             log.debug("Switching to READ mode");
             waitForWriteOperationToComplete();
             closeWriteConnection();
-            createReadDataSource();
+            createReadPool();
             inWriteMode = false;
         }
     }
@@ -105,7 +107,7 @@ public class SingleDbManager extends AbstractDbManager {
     private synchronized void ensureWriteMode() throws SQLException {
         if(!inWriteMode || writeConnection == null) {
             log.debug("Switching to WRITE mode");
-            closeReadDataSource();
+            closeReadPool();
             createWriteConnection();
             inWriteMode = true;
         }
@@ -125,12 +127,16 @@ public class SingleDbManager extends AbstractDbManager {
         }
     }
 
-    private void createReadDataSource() {
-        if(readDataSource != null) {
+    private void createReadPool() {
+        if(readPool != null) {
             return;
         }
 
-        readDataSource = createReadDataSource(connectionUrl, 10);
+        try {
+            readPool = new DuckDBReadPool(connectionUrl, 10);
+        } catch(SQLException e) {
+            throw new RuntimeException("Failed to create DuckDB read pool", e);
+        }
     }
 
     private void createWriteConnection() throws SQLException {
@@ -156,12 +162,12 @@ public class SingleDbManager extends AbstractDbManager {
         }
     }
 
-    private void closeReadDataSource() {
-        if(readDataSource != null) {
+    private void closeReadPool() {
+        if(readPool != null) {
             try {
-                readDataSource.close();
+                readPool.close();
             } finally {
-                readDataSource = null;
+                readPool = null;
                 log.debug("Closed read connection pool");
             }
         }
@@ -210,24 +216,16 @@ public class SingleDbManager extends AbstractDbManager {
         }
 
         try {
-            closeReadDataSource();
+            closeReadPool();
         } catch(Exception e) {
-            log.error("Error closing read data source", e);
+            log.error("Error closing read pool", e);
         }
 
         log.debug("Shutdown complete");
     }
 
-    public int getActiveReadConnections() {
-        return readDataSource != null ? readDataSource.getHikariPoolMXBean().getActiveConnections() : 0;
-    }
-
-    public int getIdleReadConnections() {
-        return readDataSource != null ? readDataSource.getHikariPoolMXBean().getIdleConnections() : 0;
-    }
-
-    public int getTotalReadConnections() {
-        return readDataSource != null ? readDataSource.getHikariPoolMXBean().getTotalConnections() : 0;
+    public boolean isReadPoolActive() {
+        return readPool != null;
     }
 
     public boolean isShutdown() {

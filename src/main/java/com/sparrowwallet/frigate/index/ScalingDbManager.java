@@ -1,6 +1,5 @@
 package com.sparrowwallet.frigate.index;
 
-import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,7 +14,7 @@ public class ScalingDbManager extends AbstractDbManager {
 
     private final String readWriteUrl;
     private Connection writeConnection;
-    private final List<HikariDataSource> dataSources = new ArrayList<>();
+    private final List<DuckDBReadPool> readPools = new ArrayList<>();
     private final AtomicInteger index = new AtomicInteger(0);
     private boolean shutdown = false;
 
@@ -23,8 +22,11 @@ public class ScalingDbManager extends AbstractDbManager {
         super();
         this.readWriteUrl = readWriteUrl;
         for(String url : readOnlyUrls) {
-            HikariDataSource ds = createReadDataSource(url, 1);
-            dataSources.add(ds);
+            try {
+                readPools.add(new DuckDBReadPool(url, 10));
+            } catch(SQLException e) {
+                throw new RuntimeException("Failed to create DuckDB read pool for " + url, e);
+            }
         }
     }
 
@@ -34,9 +36,17 @@ public class ScalingDbManager extends AbstractDbManager {
             throw new SQLException("Connection manager is shutting down");
         }
 
-        int ind = index.getAndIncrement() % dataSources.size();
-        HikariDataSource ds = dataSources.get(ind);
-        return operation.execute(ds.getConnection());
+        int ind = index.getAndIncrement() % readPools.size();
+        DuckDBReadPool pool = readPools.get(ind);
+        Connection conn = null;
+        try {
+            conn = pool.getConnection();
+            return operation.execute(conn);
+        } finally {
+            if(conn != null) {
+                pool.releaseConnection(conn);
+            }
+        }
     }
 
     @Override
@@ -61,8 +71,8 @@ public class ScalingDbManager extends AbstractDbManager {
             log.error("Error closing write connection", e);
         }
 
-        for(HikariDataSource ds : dataSources) {
-            ds.close();
+        for(DuckDBReadPool pool : readPools) {
+            pool.close();
         }
     }
 
