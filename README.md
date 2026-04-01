@@ -8,7 +8,8 @@ It has four goals:
 1. To provide a proof of concept implementation of the [Remote Scanner](https://github.com/silent-payments/BIP0352-index-server-specification/blob/main/README.md#remote-scanner-ephemeral) approach discussed in the BIP352 Silent Payments Index Server [Specification](https://github.com/silent-payments/BIP0352-index-server-specification/blob/main/README.md) (WIP).
 2. To propose Electrum RPC protocol methods to request and return Silent Payments information from a server.
 3. To demonstrate an efficient "in database" technique of scanning for Silent Payments transactions.
-4. _(New)_ To demonstrate the use of GPU computation to dramatically decrease scanning time.
+4. To demonstrate the use of GPU computation to dramatically decrease scanning time.
+5. _(New)_ To demonstrate that GPU compute can be preferred ahead of CPU compute, greatly reducing the resource impact of scanning while remaining widely deployable.
 
 ## Motivation
 
@@ -67,41 +68,24 @@ On startup, Frigate connects to the configured Bitcoin Core RPC, downloads block
 Once it has reached the blockchain tip, it starts a simple (and incomplete) Electrum Server to interface with the client.
 
 The scanning is the interesting part.
-Instead of loading data from the table into the Frigate server application, the database itself performs all the required cryptographic operations. 
+Instead of loading data from the table into the Frigate server application, the database itself performs all the required cryptographic operations.
 To do this, Frigate uses a fast OLAP database called [DuckDB](https://duckdb.org/why_duckdb.html#fast) designed for analytical query workloads.
-It then extends the database with [a custom extension](https://github.com/sparrowwallet/duckdb-secp256k1-extension) that adds functions from [libsecp256k1](https://github.com/bitcoin-core/secp256k1).
-This allows Frigate to perform functions such as
-```sql
-SELECT secp256k1_ec_pubkey_tweak_mul(tweak_key, scalar);
-```
-which allows the EC point computation to happen as close to the tweak data as possible.
+It then extends the database with a [custom extension](https://github.com/sparrowwallet/duckdb-ufsecp-extension) wrapping [UltrafastSecp256k1](https://github.com/shrec/UltrafastSecp256k1), a high-performance secp256k1 library with CPU and GPU backends.
+This allows the EC point computation to happen as close to the tweak data as possible.
 
-With these extensions, you can scan for silent payments with a query as follows:
+Conceptually, scanning for silent payments requires computing the Taproot output key for `k = 0` and comparing it to the list of known output keys for each tweak row:
 ```sql
 SELECT txid, tweak_key, height FROM tweak WHERE list_contains(outputs, hash_prefix_to_int(secp256k1_ec_pubkey_combine([SPEND_PUBLIC_KEY, secp256k1_ec_pubkey_create(secp256k1_tagged_sha256('BIP0352/SharedSecret', secp256k1_ec_pubkey_tweak_mul(tweak_key, SCAN_PRIVATE_KEY) || int_to_big_endian(0)))]), 1));
 ```
-This computes the Taproot output key for `k = 0` and compares it to the list of known keys for each tweak row, returning the `txid`, `tweak_key` and `height` if there is a match.
 The client can then download the transaction and determine if it does indeed contain outputs it is interested in, including for higher values of `k`.
 
-In order to reduce serialisation costs, Frigate uses a function that performs these steps at once, also including a further step to scan for change:
+Frigate performs all of these steps at once using a single scanning function that also includes a further step to scan for change:
 ```sql
-SELECT txid, tweak_key, height FROM tweak WHERE scan_silent_payments(outputs, [SCAN_PRIVATE_KEY, SPEND_PUBLIC_KEY, tweak_key], [CHANGE_TWEAK_KEY]);
+SELECT txid, tweak_key, height FROM ufsecp_scan((SELECT txid, height, tweak_key, outputs FROM tweak), SCAN_PRIVATE_KEY, SPEND_PUBLIC_KEY, [CHANGE_TWEAK_KEY]);
 ```
 The change tweak is added to the computed P<sub>0</sub> and checked again against the outputs for a match.
-A further optimization is made by passing in uncompressed 64 byte public keys in a little endian x,y format to avoid uncompressing the keys for each tweak. 
-A final optimization may be made by pre-computing the doubling multiples for each tweak key to aid in faster point multiplication, but this increases the database size significantly and has therefore not been attempted.
-
-Instead, a more scalable approach is to leverage modern GPU computation. 
-GPUs are particularly well suited to the task of repeating the same calculation on large datasets, and Frigate leverages this in a [second DuckDB custom extension](https://github.com/sparrowwallet/duckdb-cudasp-extension).
-This extension uses CUDA on NVidia GPUs to load large batches of rows from the database into GPU memory and then performs all the computation there, with the CPU only retrieving data and outputting results.
-This function is called as follows:
-```sql
-SELECT txid, tweak_key, height FROM cudasp_scan((SELECT txid, height, tweak_key, outputs FROM tweak), SCAN_PRIVATE_KEY, SPEND_PUBLIC_KEY, [CHANGE_TWEAK_KEY], batch_size := 300000);
-```
-For this function, all inputs are provided in little endian format, with the public keys again in little endian x,y format.
-This function will scale across all available GPUs in a multi-GPU setup. Only Linux x86_64 systems are supported at present.
-The fourth `batch_size` parameter is optional and may be used to change the size of the batches loaded into the GPU, which may be used to tweak performance on different GPUs.
-The default value is `300000` rows.
+All inputs are provided in little endian format, with public keys in uncompressed little endian x,y format to avoid decompression overhead on each tweak.
+UltrafastSecp256k1 uses batch affine addition and KPlan-optimized scalar multiplication to maximize throughput on CPU, and can leverage CUDA, OpenCl or Metal to offload EC computation to the GPU for significantly higher performance.
 
 ## Electrum protocol
 
@@ -228,50 +212,133 @@ sp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqjuexzk6murw56suy3e0rd2
 
 ### CPU Performance
 
-With this approach the scanning query is essentially CPU bound, mostly around EC point multiplication.
+Without GPU acceleration the scanning query is CPU bound, mostly around EC point multiplication.
 [DuckDB parallelizes](https://duckdb.org/docs/stable/guides/performance/how_to_tune_workloads#parallelism-multi-core-processing) the workload based on row groups, with each row group containing 122,880 rows.
 It will by default configure itself to use all the available cores on the server it is running.
 The behaviour can be configured in the Frigate configuration file (see `dbThreads`).
 
-The following set of benchmarks was generated on a M1 Macbook Pro with 10 available CPUs, scanning mainnet to a block height of 911434 with a database size of ~17Gb.
-**Note that no cut-through or dust filter has been used.**
+The following results were produced by the included `benchmark.py` script scanning mainnet to block height 914,000.
+Note that a mainnet database indexing from height 800,000 is required to run the benchmark.
 
-|                       |   Blocks  |   Start   | Transactions | Time      | Transactions/sec |
-|-----------------------|-----------|-----------|--------------|-----------|------------------|
-|   2 hours             |   12      |   911422  | 8961         | 407ms     | 22017            |
-|   1 day               |   144     |   911290  | 149059       | 5s 142ms  | 28989            |
-|   1 week              |   1008    |   910426  | 1143906      | 6s 188ms  | 184859           |
-|   2 weeks             |   2016    |   909418  | 2349028      | 12s 667ms | 185445           |
-|   4 weeks             |   4032    |   907402  | 5002030      | 27s 947ms | 178983           |
-|   8 weeks             |   8064    |   903370  | 9441899      | 50s 420ms | 187265           |
-|   16 weeks            |   16128   |   895306  | 15910877     | 1m 23s    | 191801           |
-|   32 weeks            |   32256   |   879178  | 32666940     | 2m 53s    | 189098           |
+M1 MacBook Pro (10 CPUs):
+
+| | Blocks | Start | End | Transactions | Time | Transactions/sec |
+|---|--------|-------|-----|--------------|------|------------------|
+| 2 hours | 12 | 913988 | 914000 | 8,207 | 244ms | 33,608 |
+| 1 day | 144 | 913856 | 914000 | 127,804 | 2s 681ms | 47,675 |
+| 1 week | 1008 | 912992 | 914000 | 751,769 | 3s 600ms | 208,843 |
+| 2 weeks | 2016 | 911984 | 914000 | 1,709,358 | 11s 128ms | 153,602 |
+| 1 month | 4320 | 909680 | 914000 | 4,240,572 | 19s 958ms | 212,470 |
+| 3 months | 12960 | 901040 | 914000 | 13,558,435 | 52s 720ms | 257,179 |
+| 6 months | 25920 | 888080 | 914000 | 26,103,759 | 1m 34s | 274,804 |
+| 1 year | 52560 | 861440 | 914000 | 59,578,156 | 3m 28s | 286,404 |
+| 2 years | 105120 | 808880 | 914000 | 132,994,804 | 7m 47s | 284,342 |
+
+Intel Core Ultra 9 285K (24 CPUs):
+
+| | Blocks | Start | End | Transactions | Time | Transactions/sec |
+|---|--------|-------|-----|--------------|------|------------------|
+| 2 hours | 12 | 913988 | 914000 | 8,207 | 256ms | 32,121 |
+| 1 day | 144 | 913856 | 914000 | 127,804 | 1s 591ms | 80,308 |
+| 1 week | 1008 | 912992 | 914000 | 751,769 | 3s 19ms | 249,026 |
+| 2 weeks | 2016 | 911984 | 914000 | 1,709,358 | 4s 474ms | 382,106 |
+| 1 month | 4320 | 909680 | 914000 | 4,240,572 | 11s 7ms | 385,252 |
+| 3 months | 12960 | 901040 | 914000 | 13,558,435 | 27s 605ms | 491,151 |
+| 6 months | 25920 | 888080 | 914000 | 26,103,759 | 48s 910ms | 533,711 |
+| 1 year | 52560 | 861440 | 914000 | 59,578,156 | 1m 44s | 569,123 |
+| 2 years | 105120 | 808880 | 914000 | 132,994,804 | 3m 50s | 576,610 |
 
 Higher performance on the longer periods is possible by increasing the number of CPUs.
-Multiple clients conducting simultaneous scans slows each scan linearly. 
+Multiple clients conducting simultaneous scans slows each scan linearly, since a single scan already saturates all available CPU cores.
 Further performance improvements to this approach may be achieved by scaling out across [multiple read-only replicas of the database](https://motherduck.com/docs/key-tasks/authenticating-and-connecting-to-motherduck/read-scaling/).
 
 ### GPU Performance
 
-GPU performance is significantly higher. The following results were measured using the same database on a system with 2x NVidia RTX 5090 GPUs:
+GPU performance is significantly higher, and as a result is the default compute backend.
 
-|          | Blocks |   Start   | Transactions | Time      | Transactions/sec |
-|----------|--------|-----------|--------------|-----------|------------------|
-| 2 hours  | 12     |   911422  | 8961         | 53ms      | 169,075          |
-| 1 day    | 144    |   911290  | 149059       | 248ms     | 600,965          |
-| 1 week   | 1008   |   910426  | 1143906      | 575ms     | 1,989,401        |
-| 2 weeks  | 2016   |   909418  | 2349028      | 1s 37ms   | 2,265,266        |
-| 4 weeks  | 4032   |   907402  | 5002030      | 2s 275ms  | 2,198,706        |
-| 8 weeks  | 8064   |   903370  | 9441899      | 3s 636ms  | 2,596,475        |
-| 16 weeks | 16128  |   895306  | 15910877     | 7s 551ms  | 2,107,461        |
-| 32 weeks | 32256  |   879178  | 32666940     | 12s 457ms | 2,622,216        |
-| 64 weeks | 64512  |   846922  | 77095632     | 26s 590ms | 2,899,422        |
+MacBook M1 Pro (Metal GPU backend):
 
-The GPU computation is so rapid that the bulk of the time is now spent retrieving the data from the database and performing GPU setup, rather than the actual EC operations. 
-This approach is performant enough that a multi-user instance is now possible.
-As all EC computation is offloaded to the GPU, CPU overhead is low and normal Electrum server RPC calls can be handled simultaneously without any performance degradation.
+| | Blocks | Start | End | Transactions | Time | Transactions/sec |
+|---|--------|-------|-----|--------------|------|------------------|
+| 2 hours | 12 | 913988 | 914000 | 8,207 | 32ms | 259,509 |
+| 1 day | 144 | 913856 | 914000 | 127,804 | 240ms | 532,614 |
+| 1 week | 1008 | 912992 | 914000 | 751,769 | 1s 313ms | 572,722 |
+| 2 weeks | 2016 | 911984 | 914000 | 1,709,358 | 3s 91ms | 552,981 |
+| 1 month | 4320 | 909680 | 914000 | 4,240,572 | 7s 458ms | 568,576 |
+| 3 months | 12960 | 901040 | 914000 | 13,558,435 | 23s 288ms | 582,196 |
+| 6 months | 25920 | 888080 | 914000 | 26,103,759 | 44s 575ms | 585,617 |
+| 1 year | 52560 | 861440 | 914000 | 59,578,156 | 1m 41s | 586,138 |
+| 2 years | 105120 | 808880 | 914000 | 132,994,804 | 3m 47s | 584,231 |
 
-[Benchmarking](BENCHMARKING.md) reveals that using multiple mid-tier GPUs outperforms fewer high-tier GPUs at roughly the same price point, especially with many concurrent client requests.
+NVIDIA RTX 5080 (CUDA backend):
+
+| | Blocks | Start | End | Transactions | Time | Transactions/sec |
+|---|--------|-------|-----|--------------|------|------------------|
+| 2 hours | 12 | 913988 | 914000 | 8,207 | 18ms | 460,614 |
+| 1 day | 144 | 913856 | 914000 | 127,804 | 26ms | 4,880,898 |
+| 1 week | 1008 | 912992 | 914000 | 751,769 | 69ms | 10,906,924 |
+| 2 weeks | 2016 | 911984 | 914000 | 1,709,358 | 146ms | 11,722,414 |
+| 1 month | 4320 | 909680 | 914000 | 4,240,572 | 341ms | 12,447,948 |
+| 3 months | 12960 | 901040 | 914000 | 13,558,435 | 1s 66ms | 12,722,307 |
+| 6 months | 25920 | 888080 | 914000 | 26,103,759 | 1s 613ms | 16,182,843 |
+| 1 year | 52560 | 861440 | 914000 | 59,578,156 | 3s 466ms | 17,188,956 |
+| 2 years | 105120 | 808880 | 914000 | 132,994,804 | 7s 690ms | 17,294,286 |
+
+2x NVIDIA RTX 5090 (CUDA backend):
+
+| | Blocks | Start | End | Transactions | Time | Transactions/sec |
+|---|--------|-------|-----|--------------|------|------------------|
+| 2 hours | 12 | 913988 | 914000 | 8,207 | 21ms | 393,537 |
+| 1 day | 144 | 913856 | 914000 | 127,804 | 53ms | 2,404,792 |
+| 1 week | 1008 | 912992 | 914000 | 751,769 | 92ms | 8,207,103 |
+| 2 weeks | 2016 | 911984 | 914000 | 1,709,358 | 120ms | 14,213,421 |
+| 1 month | 4320 | 909680 | 914000 | 4,240,572 | 158ms | 26,779,011 |
+| 3 months | 12960 | 901040 | 914000 | 13,558,435 | 562ms | 24,146,078 |
+| 6 months | 25920 | 888080 | 914000 | 26,103,759 | 1s 186ms | 22,012,526 |
+| 1 year | 52560 | 861440 | 914000 | 59,578,156 | 2s 96ms | 28,418,826 |
+| 2 years | 105120 | 808880 | 914000 | 132,994,804 | 3s 208ms | 41,455,203 |
+
+This approach is performant enough for a multi-user public instance.
+As EC computation is offloaded to the GPU, CPU overhead is low and normal Electrum server RPC calls can be handled simultaneously without any performance degradation.
+Multiple clients conducting simultaneous scans slows each scan linearly, since a single scan already saturates the available GPUs.
+Using multiple GPUs in the same system is also supported and the workload is scaled across them.
+
+A discrete GPU is not required however. 
+Frigate can take advantage of any integrated GPU supported by OpenCL, which in practice includes almost all desktop Intel and AMD chips produced in the last decade.
+This prevents saturation of the CPU, and in the case of weaker CPUs (for example older Intel NUCs) can actually be faster.
+See the section below on enabling the iGPU on Linux.
+
+### GPU Requirements
+
+Frigate supports three GPU backends, selected automatically at runtime in order of preference:
+
+**CUDA (NVIDIA)**
+- NVIDIA Ampere or newer GPU (RTX 30xx, A100, RTX 40xx, H100, RTX 50xx)
+- NVIDIA driver 570.86.15+ (Linux) or 571.14+ (Windows)
+- No CUDA toolkit installation required on the host
+
+**OpenCL (NVIDIA, Intel, AMD)**
+- Any GPU with an OpenCL 1.2+ runtime
+- NVIDIA: OpenCL runtime is included with the driver
+- Intel: requires `intel-opencl-icd` (see [Enabling Intel iGPU on Linux](#enabling-intel-igpu-on-linux))
+- AMD: requires ROCm or AMDGPU-PRO OpenCL runtime
+- On Linux, the `ocl-icd-libopencl1` ICD loader is required
+
+**Metal (Apple)**
+- Apple Silicon (M1 or newer) or AMD GPU with Metal support
+- macOS 12 (Monterey) or newer
+
+### Benchmarking
+
+The `benchmark.py` script in the project root can be used to generate the above tables against a running Frigate server:
+```shell
+python3 benchmark.py
+python3 benchmark.py --markdown
+```
+The `--clients N` option runs N concurrent clients per scan period to test server behaviour under load:
+```shell
+python3 benchmark.py --clients 4
+```
 
 ## Configuration
 
@@ -288,8 +355,8 @@ An example configuration looks as follows
   "startIndexing": true,
   "indexStartHeight": 0,
   "scriptPubKeyCacheSize": 10000000,
-  "useCuda": false,
-  "cudaBatchSize": 300000,
+  "batchSize": 300000,
+  "computeBackend": "AUTO",
   "backendElectrumServer": "tcp://localhost:50001"
 }
 ```
@@ -308,24 +375,14 @@ This value can be increased or decreased depending on available RAM.
 The DuckDB database is stored in a `db` subfolder in the same directory, in a file called `frigate.duckdb`.
 DuckDB databases can be transferred between different operating systems, and should survive unclean shutdowns.
 
-To reduce CPU load while scanning, add an entry to reduce the number of cores made available to DuckDB, for example:
-```json
-{
-  "dbThreads": 2
-}
-```
+The `computeBackend` setting controls whether scanning uses GPU or CPU. Valid values are `AUTO` (default), `GPU`, and `CPU`.
+In `AUTO` mode, the GPU is used if one is detected, otherwise the CPU is used and a warning is logged.
+Set to `CPU` to force CPU-only scanning and suppress the warning. 
+With CPU-only scanning, to reduce the CPU load set the number of cores made available to DuckDB with `dbThreads`.
+Valid values are any integer equal to or less than number of CPU cores.
 
-GPU computation should only be enabled on Linux x86_64 systems with a minimum CUDA version of 12.8
-```json
-{
-  "useCuda": true
-}
-```
-The extension has been compiled for the following architectures:
-- 80 - Ampere (A100)
-- 86 - Ampere (RTX 30xx series)
-- 89 - Ada Lovelace (RTX 40xx/50xx series)
-- 90 - Hopper (H100/H200)
+The `batchSize` setting controls how many transactions are processed per GPU dispatch (default: 300,000).
+If scanning hangs or becomes unstable on certain GPUs (particularly older OpenCL-only GPUs), try reducing this value (e.g. 10,000 to 50,000).
 
 Frigate currently only implements a selection of Electrum server RPCs directly.
 Any other requests (including address-related lookups) can be proxied to another Electrum server.
@@ -394,6 +451,44 @@ The full range of options can be queried with:
 ./bin/frigate-cli -h
 ```
 
+## Enabling Intel iGPU on Linux
+
+Frigate supports GPU-accelerated scanning via OpenCL on Intel integrated GPUs.
+On most Linux distributions, the Intel OpenCL runtime is not installed by default.
+Note that on newer Intel CPUs, the CPU may be stronger than the GPU - but offloading the computation to the GPU is still beneficial.
+
+### Install the Intel OpenCL runtime
+
+On Ubuntu/Debian:
+```shell
+sudo apt install ocl-icd-libopencl1 intel-opencl-icd clinfo
+```
+
+`ocl-icd-libopencl1` is the OpenCL ICD loader that dispatches to vendor runtimes — it may already be installed if another GPU driver (e.g. NVIDIA) is present.
+`intel-opencl-icd` is the Intel GPU compute runtime. Both can coexist with other GPU drivers without affecting them.
+`clinfo` is a diagnostic tool for listing available OpenCL platforms and devices.
+The OpenCL ICD (Installable Client Driver) system allows multiple GPU vendors to coexist.
+
+### Driver compatibility
+
+The Ubuntu-packaged driver may be outdated for newer Intel GPUs.
+If Frigate crashes during startup with a newer Intel GPU, install the latest driver from Intel's PPA:
+```shell
+wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | sudo gpg --yes --dearmor --output /usr/share/keyrings/intel-graphics.gpg
+echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu $(lsb_release -cs) unified" | sudo tee /etc/apt/sources.list.d/intel-gpu.list
+sudo apt update
+sudo apt install intel-opencl-icd
+```
+
+### Verify
+
+Check that the Intel GPU is visible:
+```shell
+clinfo | grep "Device Name"
+```
+
+You should see your Intel GPU listed (e.g. `Intel(R) UHD Graphics [0x7d67]`).
+
 ## Building
 
 To clone this project, use
@@ -404,8 +499,9 @@ or for those without SSH credentials:
 
 `git clone --recursive https://github.com/sparrowwallet/frigate.git`
 
-In order to build, Frigate requires Java 22 or higher to be installed.
-The release binaries are built with [Eclipse Temurin 22.0.2+9](https://github.com/adoptium/temurin22-binaries/releases/tag/jdk-22.0.2%2B9).
+In order to build, Frigate requires Java 25 or higher to be installed.
+The release binaries are built with [Eclipse Temurin 25.0.2+10](https://github.com/adoptium/temurin25-binaries/releases/tag/jdk-25.0.2%2B10).
+If you are using [SDKMAN](https://sdkman.io/), you can use `sdk env install` to ensure you have the correct version.
 
 Other packages may also be necessary to build depending on the platform. On Debian/Ubuntu systems:
 
