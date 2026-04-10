@@ -10,10 +10,15 @@ import com.sparrowwallet.frigate.index.Index;
 import com.sparrowwallet.frigate.index.IndexQuerier;
 import com.sparrowwallet.frigate.io.Config;
 import com.sparrowwallet.frigate.io.Storage;
+import com.github.arteam.simplejsonrpc.client.exception.JsonRpcException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.IOException;
+import java.net.BindException;
+import java.net.ConnectException;
+import java.sql.SQLException;
 import java.util.Locale;
 
 public class Frigate {
@@ -145,7 +150,57 @@ public class Frigate {
             getLogger().info("Using " + Network.get() + " configuration");
         }
 
-        Frigate frigate = new Frigate();
-        frigate.start();
+        try {
+            Frigate frigate = new Frigate();
+            frigate.start();
+        } catch(Exception e) {
+            String message = getOperationalErrorMessage(e);
+            if(message != null) {
+                getLogger().error(message);
+            } else {
+                getLogger().error("Fatal error", e);
+            }
+            System.exit(1);
+        }
+    }
+
+    private static String getOperationalErrorMessage(Exception e) {
+        String configExceptionMessage = null;
+        Throwable current = e;
+        while(current != null) {
+            if(current instanceof ConnectException) {
+                String server = Config.get().getCore().getServer();
+                if(server == null) server = "http://127.0.0.1:8332";
+                return "Cannot connect to Bitcoin Core at " + server + ". Ensure Bitcoin Core is running and the server URL in config.toml is correct, or set connect = false under [core].";
+            }
+            if(current instanceof BindException) {
+                int port = Config.get().getServer().getPort();
+                return "Port " + port + " is already in use. Another Frigate instance may be running, or change the port under [server] in config.toml.";
+            }
+            if(current instanceof IOException ioe && ioe.getMessage() != null) {
+                String msg = ioe.getMessage();
+                if(msg.contains("Cannot find Bitcoin Core cookie file")) {
+                    return msg + ". Ensure Bitcoin Core is running, or set connect = false under [core] in config.toml.";
+                }
+                if(msg.contains("authentication failed")) {
+                    return "Bitcoin Core authentication failed. Check authType, dataDir, and auth under [core] in config.toml, or set connect = false.";
+                }
+            }
+            if(current instanceof SQLException sql && sql.getMessage() != null) {
+                if(sql.getMessage().contains("Could not set lock")) {
+                    return "Database is locked by another process. Ensure no other Frigate instance is using the same database.";
+                }
+            }
+            if(current instanceof JsonRpcException rpc && rpc.getMessage() != null) {
+                if(rpc.getMessage().contains("-txindex")) {
+                    return "Bitcoin Core requires txindex=1 in bitcoin.conf. Restart Bitcoin Core after adding it.";
+                }
+            }
+            if(current instanceof ConfigurationException && configExceptionMessage == null) {
+                configExceptionMessage = current.getMessage();
+            }
+            current = current.getCause();
+        }
+        return configExceptionMessage;
     }
 }
