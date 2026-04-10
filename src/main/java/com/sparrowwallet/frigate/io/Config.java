@@ -1,236 +1,431 @@
 package com.sparrowwallet.frigate.io;
 
-import com.google.gson.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.toml.TomlMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.lang.reflect.Type;
+import java.nio.file.Files;
 import java.util.List;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
+@JsonInclude(JsonInclude.Include.NON_EMPTY)
 public class Config {
     private static final Logger log = LoggerFactory.getLogger(Config.class);
 
-    public static final String CONFIG_FILENAME = "config";
+    public static final String TOML_CONFIG_FILENAME = "config.toml";
+    public static final String JSON_CONFIG_FILENAME = "config";
 
-    private Server coreServer;
-    private CoreAuthType coreAuthType;
-    private File coreDataDir;
-    private String coreAuth;
-    private Boolean startIndexing;
-    private Integer indexStartHeight;
-    private Integer scriptPubKeyCacheSize;
-    private Integer dbThreads;
-    private String dbUrl;
-    private List<String> readDbUrls;
-    private int batchSize = 300000;
-    private ComputeBackend computeBackend;
-    private Server backendElectrumServer;
+    private CoreConfig core;
+    private IndexConfig index;
+    private ScanConfig scan;
+    private ServerConfig server;
+    private DatabaseConfig database;
 
     private static Config INSTANCE;
 
-    private static Gson getGson() {
-        GsonBuilder gsonBuilder = new GsonBuilder();
-        gsonBuilder.registerTypeAdapter(File.class, new FileSerializer());
-        gsonBuilder.registerTypeAdapter(File.class, new FileDeserializer());
-        gsonBuilder.registerTypeAdapter(Server.class, new ServerSerializer());
-        gsonBuilder.registerTypeAdapter(Server.class, new ServerDeserializer());
-        return gsonBuilder.setPrettyPrinting().disableHtmlEscaping().create();
+    private static final TomlMapper tomlMapper = TomlMapper.builder().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
+
+    public Config() {
+        core = new CoreConfig();
+        index = new IndexConfig();
+        scan = new ScanConfig();
+        server = new ServerConfig();
+        database = new DatabaseConfig();
     }
 
-    private static File getConfigFile() {
-        File sparrowDir = Storage.getFrigateDir();
-        return new File(sparrowDir, CONFIG_FILENAME);
+    private static File getTomlConfigFile() {
+        return new File(Storage.getFrigateDir(), TOML_CONFIG_FILENAME);
+    }
+
+    private static File getJsonConfigFile() {
+        return new File(Storage.getFrigateDir(), JSON_CONFIG_FILENAME);
     }
 
     private static Config load() {
-        File configFile = getConfigFile();
-        if(configFile.exists()) {
-            try {
-                Reader reader = new FileReader(configFile);
-                Config config = getGson().fromJson(reader, Config.class);
-                reader.close();
+        File tomlFile = getTomlConfigFile();
+        File jsonFile = getJsonConfigFile();
 
+        if(tomlFile.exists()) {
+            try {
+                Config config = tomlMapper.readValue(tomlFile, Config.class);
                 if(config != null) {
                     return config;
                 }
             } catch(Exception e) {
-                log.error("Error opening " + configFile.getAbsolutePath(), e);
-                //Ignore and assume no config
+                log.error("Error reading " + tomlFile.getAbsolutePath(), e);
+            }
+        } else if(jsonFile.exists()) {
+            try {
+                Config config = migrateFromJson(jsonFile);
+                if(config != null) {
+                    saveToml(config, tomlFile);
+                    File backupFile = new File(jsonFile.getPath() + ".bak");
+                    jsonFile.renameTo(backupFile);
+                    log.info("Migrated config from JSON to TOML (backup: {})", backupFile.getName());
+                    return config;
+                }
+            } catch(Exception e) {
+                log.error("Error migrating " + jsonFile.getAbsolutePath(), e);
+            }
+        } else {
+            try {
+                writeDefaultConfig(tomlFile);
+            } catch(Exception e) {
+                log.error("Error writing default config", e);
             }
         }
 
         return new Config();
     }
 
+    private static Config migrateFromJson(File jsonFile) throws IOException {
+        ObjectMapper jsonMapper = new ObjectMapper();
+        jsonMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        JsonNode root = jsonMapper.readTree(jsonFile);
+
+        Config config = new Config();
+
+        if(root.has("coreServer")) {
+            config.getCore().setServer(root.get("coreServer").asText());
+        }
+        if(root.has("coreAuthType")) {
+            config.getCore().setAuthType(root.get("coreAuthType").asText());
+        }
+        if(root.has("coreDataDir")) {
+            config.getCore().setDataDir(root.get("coreDataDir").asText());
+        }
+        if(root.has("coreAuth")) {
+            config.getCore().setAuth(root.get("coreAuth").asText());
+        }
+        if(root.has("startIndexing")) {
+            config.getCore().setConnect(root.get("startIndexing").asBoolean());
+        }
+        if(root.has("indexStartHeight")) {
+            config.getIndex().setStartHeight(root.get("indexStartHeight").asInt());
+        }
+        if(root.has("scriptPubKeyCacheSize")) {
+            int oldSize = root.get("scriptPubKeyCacheSize").asInt();
+            config.getIndex().setCacheSize(formatCacheSize(oldSize));
+        }
+
+        if(root.has("batchSize")) {
+            config.getScan().setBatchSize(root.get("batchSize").asInt());
+        }
+        if(root.has("computeBackend")) {
+            config.getScan().setComputeBackend(root.get("computeBackend").asText());
+        }
+        if(root.has("dbThreads")) {
+            config.getScan().setDbThreads(root.get("dbThreads").asInt());
+        }
+
+        if(root.has("backendElectrumServer")) {
+            config.getServer().setBackendElectrumServer(root.get("backendElectrumServer").asText());
+        }
+
+        if(root.has("dbUrl")) {
+            config.getDatabase().setUrl(root.get("dbUrl").asText());
+        }
+        if(root.has("readDbUrls")) {
+            List<String> urls = new java.util.ArrayList<>();
+            root.get("readDbUrls").forEach(node -> urls.add(node.asText()));
+            config.getDatabase().setReadUrls(urls);
+        }
+
+        return config;
+    }
+
+    private static String formatCacheSize(int size) {
+        if(size >= 1_000_000 && size % 1_000_000 == 0) {
+            return (size / 1_000_000) + "M";
+        } else if(size >= 1_000 && size % 1_000 == 0) {
+            return (size / 1_000) + "K";
+        }
+        return String.valueOf(size);
+    }
+
+    static int parseCacheSize(String value) {
+        if(value == null || value.isEmpty()) {
+            return 10_000_000;
+        }
+        String s = value.trim().toUpperCase();
+        if(s.endsWith("M")) {
+            return (int) (Double.parseDouble(s.substring(0, s.length() - 1)) * 1_000_000);
+        } else if(s.endsWith("K")) {
+            return (int) (Double.parseDouble(s.substring(0, s.length() - 1)) * 1_000);
+        }
+        return Integer.parseInt(s);
+    }
+
+    private static void writeDefaultConfig(File tomlFile) {
+        try(InputStream is = Config.class.getResourceAsStream("/config.toml.default")) {
+            if(is != null) {
+                Storage.createOwnerOnlyFile(tomlFile);
+                Files.copy(is, tomlFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch(IOException e) {
+            log.error("Error writing default config", e);
+        }
+    }
+
+    private static void saveToml(Config config, File tomlFile) {
+        try {
+            if(!tomlFile.exists()) {
+                Storage.createOwnerOnlyFile(tomlFile);
+            }
+            tomlMapper.writeValue(tomlFile, config);
+        } catch(IOException e) {
+            log.error("Error writing config", e);
+        }
+    }
+
     public static synchronized Config get() {
         if(INSTANCE == null) {
             INSTANCE = load();
         }
-
         return INSTANCE;
     }
 
-    public Server getCoreServer() {
-        return coreServer;
+    public CoreConfig getCore() {
+        if(core == null) {
+            core = new CoreConfig();
+        }
+        return core;
     }
 
-    public void setCoreServer(Server coreServer) {
-        this.coreServer = coreServer;
-        flush();
+    public IndexConfig getIndex() {
+        if(index == null) {
+            index = new IndexConfig();
+        }
+        return index;
     }
 
-    public CoreAuthType getCoreAuthType() {
-        return coreAuthType;
+    public ScanConfig getScan() {
+        if(scan == null) {
+            scan = new ScanConfig();
+        }
+        return scan;
     }
 
-    public void setCoreAuthType(CoreAuthType coreAuthType) {
-        this.coreAuthType = coreAuthType;
-        flush();
+    public ServerConfig getServer() {
+        if(server == null) {
+            server = new ServerConfig();
+        }
+        return server;
     }
 
-    public File getCoreDataDir() {
-        return coreDataDir;
+    public DatabaseConfig getDatabase() {
+        if(database == null) {
+            database = new DatabaseConfig();
+        }
+        return database;
     }
 
-    public void setCoreDataDir(File coreDataDir) {
-        this.coreDataDir = coreDataDir;
-        flush();
-    }
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class CoreConfig {
+        private Boolean connect;
+        private String server;
+        private String authType;
+        private String dataDir;
+        private String auth;
 
-    public String getCoreAuth() {
-        return coreAuth;
-    }
+        public Boolean getConnect() {
+            return connect;
+        }
 
-    public void setCoreAuth(String coreAuth) {
-        this.coreAuth = coreAuth;
-        flush();
-    }
+        public void setConnect(Boolean connect) {
+            this.connect = connect;
+        }
 
-    public Boolean isStartIndexing() {
-        return startIndexing;
-    }
+        @JsonIgnore
+        public boolean shouldConnect() {
+            return connect == null || connect;
+        }
 
-    public void setStartIndexing(Boolean startIndexing) {
-        this.startIndexing = startIndexing;
-        flush();
-    }
+        public String getServer() {
+            return server;
+        }
 
-    public Integer getIndexStartHeight() {
-        return indexStartHeight;
-    }
+        public void setServer(String server) {
+            this.server = server;
+        }
 
-    public void setIndexStartHeight(Integer indexStartHeight) {
-        this.indexStartHeight = indexStartHeight;
-        flush();
-    }
+        public String getAuthType() {
+            return authType;
+        }
 
-    public Integer getScriptPubKeyCacheSize() {
-        return scriptPubKeyCacheSize;
-    }
+        public void setAuthType(String authType) {
+            this.authType = authType;
+        }
 
-    public void setScriptPubKeyCacheSize(Integer scriptPubKeyCacheSize) {
-        this.scriptPubKeyCacheSize = scriptPubKeyCacheSize;
-        flush();
-    }
-
-    public Integer getDbThreads() {
-        return dbThreads;
-    }
-
-    public void setDbThreads(Integer dbThreads) {
-        this.dbThreads = dbThreads;
-        flush();
-    }
-
-    public String getDbUrl() {
-        return dbUrl;
-    }
-
-    public void setDbUrl(String dbUrl) {
-        this.dbUrl = dbUrl;
-        flush();
-    }
-
-    public List<String> getReadDbUrls() {
-        return readDbUrls;
-    }
-
-    public void setReadDbUrls(List<String> readDbUrls) {
-        this.readDbUrls = readDbUrls;
-        flush();
-    }
-
-    public int getBatchSize() {
-        return batchSize;
-    }
-
-    public void setBatchSize(int batchSize) {
-        this.batchSize = batchSize;
-        flush();
-    }
-
-    public ComputeBackend getComputeBackend() {
-        return computeBackend != null ? computeBackend : ComputeBackend.AUTO;
-    }
-
-    public void setComputeBackend(ComputeBackend computeBackend) {
-        this.computeBackend = computeBackend;
-        flush();
-    }
-
-    public Server getBackendElectrumServer() {
-        return backendElectrumServer;
-    }
-
-    public void setBackendElectrumServer(Server backendElectrumServer) {
-        this.backendElectrumServer = backendElectrumServer;
-        flush();
-    }
-
-    private synchronized void flush() {
-        Gson gson = getGson();
-        try {
-            File configFile = getConfigFile();
-            if(!configFile.exists()) {
-                Storage.createOwnerOnlyFile(configFile);
+        @JsonIgnore
+        public CoreAuthType getAuthTypeEnum() {
+            if(authType == null) {
+                return null;
             }
+            try {
+                return CoreAuthType.valueOf(authType);
+            } catch(Exception e) {
+                return null;
+            }
+        }
 
-            Writer writer = new FileWriter(configFile);
-            gson.toJson(this, writer);
-            writer.flush();
-            writer.close();
-        } catch (IOException e) {
-            //Ignore
+        public String getDataDir() {
+            return dataDir;
+        }
+
+        public void setDataDir(String dataDir) {
+            this.dataDir = dataDir;
+        }
+
+        @JsonIgnore
+        public File getDataDirFile() {
+            return dataDir != null ? new File(dataDir) : null;
+        }
+
+        public String getAuth() {
+            return auth;
+        }
+
+        public void setAuth(String auth) {
+            this.auth = auth;
+        }
+
+        @JsonIgnore
+        public Server getServerObj() {
+            return server != null ? Server.fromString(server) : null;
         }
     }
 
-    private static class FileSerializer implements JsonSerializer<File> {
-        @Override
-        public JsonElement serialize(File src, Type typeOfSrc, JsonSerializationContext context) {
-            return new JsonPrimitive(src.getAbsolutePath());
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class IndexConfig {
+        private Integer startHeight;
+        private String cacheSize;
+
+        public Integer getStartHeight() {
+            return startHeight;
+        }
+
+        public void setStartHeight(Integer startHeight) {
+            this.startHeight = startHeight;
+        }
+
+        public String getCacheSize() {
+            return cacheSize;
+        }
+
+        public void setCacheSize(String cacheSize) {
+            this.cacheSize = cacheSize;
+        }
+
+        @JsonIgnore
+        public int getCacheSizeEntries() {
+            return Config.parseCacheSize(cacheSize);
         }
     }
 
-    private static class FileDeserializer implements JsonDeserializer<File> {
-        @Override
-        public File deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
-            return new File(json.getAsJsonPrimitive().getAsString());
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class ScanConfig {
+        public static final int DEFAULT_BATCH_SIZE = 300_000;
+
+        private Integer batchSize;
+        private String computeBackend;
+        private Integer dbThreads;
+
+        public int getBatchSize() {
+            return batchSize != null ? batchSize : DEFAULT_BATCH_SIZE;
+        }
+
+        public void setBatchSize(int batchSize) {
+            this.batchSize = batchSize;
+        }
+
+        @JsonIgnore
+        public ComputeBackend getComputeBackendEnum() {
+            if(computeBackend == null) {
+                return ComputeBackend.AUTO;
+            }
+            try {
+                return ComputeBackend.valueOf(computeBackend);
+            } catch(Exception e) {
+                return ComputeBackend.AUTO;
+            }
+        }
+
+        public String getComputeBackend() {
+            return computeBackend;
+        }
+
+        public void setComputeBackend(String computeBackend) {
+            this.computeBackend = computeBackend;
+        }
+
+        public Integer getDbThreads() {
+            return dbThreads;
+        }
+
+        public void setDbThreads(Integer dbThreads) {
+            this.dbThreads = dbThreads;
         }
     }
 
-    private static class ServerSerializer implements JsonSerializer<Server> {
-        @Override
-        public JsonElement serialize(Server src, Type typeOfSrc, JsonSerializationContext context) {
-            return new JsonPrimitive(src.toString());
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class ServerConfig {
+        private Integer port;
+        private String backendElectrumServer;
+
+        public int getPort() {
+            return port != null ? port : com.sparrowwallet.frigate.electrum.ElectrumServerRunnable.DEFAULT_PORT;
+        }
+
+        public void setPort(Integer port) {
+            this.port = port;
+        }
+
+        public String getBackendElectrumServer() {
+            return backendElectrumServer;
+        }
+
+        public void setBackendElectrumServer(String backendElectrumServer) {
+            this.backendElectrumServer = backendElectrumServer;
+        }
+
+        @JsonIgnore
+        public Server getBackendElectrumServerObj() {
+            return backendElectrumServer != null ? Server.fromString(backendElectrumServer) : null;
         }
     }
 
-    private static class ServerDeserializer implements JsonDeserializer<Server> {
-        @Override
-        public Server deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
-            return Server.fromString(json.getAsJsonPrimitive().getAsString());
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class DatabaseConfig {
+        private String url;
+        private List<String> readUrls;
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public List<String> getReadUrls() {
+            return readUrls;
+        }
+
+        public void setReadUrls(List<String> readUrls) {
+            this.readUrls = readUrls;
         }
     }
 }
-

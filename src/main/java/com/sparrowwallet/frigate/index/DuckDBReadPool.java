@@ -29,8 +29,8 @@ public class DuckDBReadPool {
         this.masterConnection = (DuckDBConnection)DriverManager.getConnection(connectionUrl, props);
 
         try(Statement stmt = masterConnection.createStatement()) {
-            if(Config.get().getDbThreads() != null) {
-                stmt.execute("SET threads = '" + Config.get().getDbThreads() + "'");
+            if(Config.get().getScan().getDbThreads() != null) {
+                stmt.execute("SET threads = '" + Config.get().getScan().getDbThreads() + "'");
             }
 
             File ufsecpExtensionFile = Storage.getUfsecpExtensionFile();

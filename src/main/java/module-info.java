@@ -2,6 +2,8 @@ module com.sparrowwallet.frigate {
     requires com.sparrowwallet.drongo;
     requires duckdb.jdbc;
     requires com.fasterxml.jackson.annotation;
+    requires com.fasterxml.jackson.databind;
+    requires com.fasterxml.jackson.dataformat.toml;
     requires simple.json.rpc.core;
     requires simple.json.rpc.client;
     requires simple.json.rpc.server;
@@ -16,5 +18,5 @@ module com.sparrowwallet.frigate {
     exports com.sparrowwallet.frigate.electrum;
     exports com.sparrowwallet.frigate.index;
     exports com.sparrowwallet.frigate.cli;
-    opens com.sparrowwallet.frigate.io;
+    opens com.sparrowwallet.frigate.io to com.fasterxml.jackson.databind;
 }

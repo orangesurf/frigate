@@ -63,8 +63,8 @@ public class MemoryDbManager implements DbManager {
 
         Properties duckDbProperties = new Properties();
         duckDbProperties.setProperty("allow_unsigned_extensions", "true");
-        if(Config.get().getDbThreads() != null) {
-            duckDbProperties.setProperty("threads", Config.get().getDbThreads().toString());
+        if(Config.get().getScan().getDbThreads() != null) {
+            duckDbProperties.setProperty("threads", Config.get().getScan().getDbThreads().toString());
         }
 
         connection = DriverManager.getConnection(DbManager.DB_PREFIX + "memory:", duckDbProperties);

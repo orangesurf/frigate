@@ -36,29 +36,24 @@ public class Frigate {
     public void start() {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
 
-        Integer startHeight = Config.get().getIndexStartHeight();
+        Config config = Config.get();
+
+        Integer startHeight = config.getIndex().getStartHeight();
         if(startHeight == null) {
             startHeight = Network.get() == Network.MAINNET ? MAINNET_TAPROOT_ACTIVATION_HEIGHT : TESTNET_TAPROOT_ACTIVATION_HEIGHT;
-            Config.get().setIndexStartHeight(startHeight);
         }
 
-        int batchSize = Config.get().getBatchSize();
+        int batchSize = config.getScan().getBatchSize();
 
         blocksIndex = new Index(startHeight, false, batchSize);
         mempoolIndex = new Index(0, true, batchSize);
 
-        Boolean startIndexing = Config.get().isStartIndexing();
-        if(startIndexing == null) {
-            startIndexing = true;
-            Config.get().setStartIndexing(startIndexing);
-        }
-
-        if(startIndexing) {
+        if(config.getCore().shouldConnect()) {
             bitcoindClient = new BitcoindClient(blocksIndex, mempoolIndex);
             bitcoindClient.initialize();
         }
 
-        electrumServer = new ElectrumServerRunnable(bitcoindClient, new IndexQuerier(blocksIndex, mempoolIndex));
+        electrumServer = new ElectrumServerRunnable(bitcoindClient, new IndexQuerier(blocksIndex, mempoolIndex), config.getServer().getPort());
         Thread electrumServerThread = new Thread(electrumServer, "Frigate Electrum Server");
         electrumServerThread.setDaemon(false);
         electrumServerThread.start();

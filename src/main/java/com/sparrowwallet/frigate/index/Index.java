@@ -46,8 +46,8 @@ public class Index {
         if(inMemory) {
             dbManager = new MemoryDbManager();
         } else {
-            String dbUrl = Config.get().getDbUrl();
-            List<String> readDbUrls = Config.get().getReadDbUrls();
+            String dbUrl = Config.get().getDatabase().getUrl();
+            List<String> readDbUrls = Config.get().getDatabase().getReadUrls();
             if(dbUrl != null && readDbUrls != null && !readDbUrls.isEmpty()) {
                 dbManager = new ScalingDbManager(dbUrl, readDbUrls);
             } else if(dbUrl == null) {
@@ -74,7 +74,7 @@ public class Index {
     }
 
     private void checkGpuBackend() {
-        ComputeBackend computeBackend = Config.get().getComputeBackend();
+        ComputeBackend computeBackend = Config.get().getScan().getComputeBackendEnum();
         if(computeBackend == ComputeBackend.CPU) {
             return;
         }
@@ -339,7 +339,7 @@ public class Index {
 
         sql += "), ?, ?, " + labelsStr + ", batch_size := ?";
 
-        ComputeBackend computeBackend = Config.get().getComputeBackend();
+        ComputeBackend computeBackend = Config.get().getScan().getComputeBackendEnum();
         if(computeBackend != ComputeBackend.AUTO) {
             sql += ", backend := ?";
         }
@@ -364,7 +364,7 @@ public class Index {
         }
         statement.setInt(index++, batchSize);
 
-        ComputeBackend computeBackend = Config.get().getComputeBackend();
+        ComputeBackend computeBackend = Config.get().getScan().getComputeBackendEnum();
         if(computeBackend != ComputeBackend.AUTO) {
             statement.setString(index, computeBackend.toSqlValue());
         }

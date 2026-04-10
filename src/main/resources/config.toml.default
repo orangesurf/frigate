@@ -1,0 +1,26 @@
+# Frigate configuration
+# See https://github.com/sparrowwallet/frigate for documentation
+
+[core]
+connect = true
+# server = "http://127.0.0.1:8332"
+# authType = "COOKIE"            # COOKIE or USERPASS
+# dataDir = "/home/bitcoin/.bitcoin"
+# auth = "user:password"         # only needed for USERPASS
+
+[index]
+# startHeight = 0                # default: 709632 on mainnet (Taproot activation), 0 on testnet
+# cacheSize = "10M"              # scriptPubKey cache entries (default: 10M, ~4GB RAM)
+
+[scan]
+# batchSize = 300000             # rows per GPU dispatch (reduce if scanning hangs on older GPUs)
+# computeBackend = "AUTO"        # AUTO, GPU, or CPU (AUTO prefers GPU over CPU)
+# dbThreads = 4                  # limit DuckDB threads (reduces CPU load when computeBackend = "CPU")
+
+[server]
+# port = 57001
+# backendElectrumServer = "tcp://localhost:50001"
+
+# [database]
+# url = "jdbc:duckdb:/custom/path/frigate.duckdb"
+# readUrls = ["jdbc:duckdb:/replica1/frigate.duckdb"]

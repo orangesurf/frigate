@@ -11,6 +11,7 @@ import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
 import com.sparrowwallet.frigate.bitcoind.BlockReorgEvent;
 import com.sparrowwallet.frigate.index.*;
 import com.sparrowwallet.frigate.io.Config;
+import com.sparrowwallet.frigate.io.Server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,8 +42,9 @@ public class RequestHandler implements Runnable, SubscriptionStatus, Thread.Unca
 
     public RequestHandler(Socket clientSocket, BitcoindClient bitcoindClient, IndexQuerier indexQuerier) {
         this.clientSocket = clientSocket;
-        if(Config.get().getBackendElectrumServer() != null) {
-            this.backendTransport = new ElectrumTransport(Config.get().getBackendElectrumServer().getHostAndPort(), new BackendSubscriptionService());
+        Server backendServer = Config.get().getServer().getBackendElectrumServerObj();
+        if(backendServer != null) {
+            this.backendTransport = new ElectrumTransport(backendServer.getHostAndPort(), new BackendSubscriptionService());
             this.reader = Thread.ofVirtual().name("BackendServerReadThread-" + System.identityHashCode(this)).unstarted(new ReadRunnable(backendTransport));
             reader.setUncaughtExceptionHandler(this);
         } else {

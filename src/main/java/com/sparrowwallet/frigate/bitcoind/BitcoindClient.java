@@ -55,28 +55,26 @@ public class BitcoindClient {
         BitcoindTransport bitcoindTransport;
 
         Config config = Config.get();
-        Server coreServer = config.getCoreServer();
+        Config.CoreConfig coreConfig = config.getCore();
+
+        Server coreServer = coreConfig.getServerObj();
         if(coreServer == null) {
             coreServer = new Server("http://127.0.0.1:" + Network.get().getDefaultPort());
-            Config.get().setCoreServer(coreServer);
         }
 
-        CoreAuthType coreAuthType = config.getCoreAuthType();
+        CoreAuthType coreAuthType = coreConfig.getAuthTypeEnum();
         if(coreAuthType == null) {
             coreAuthType = CoreAuthType.COOKIE;
-            Config.get().setCoreAuthType(coreAuthType);
         }
 
-        File coreDataDir = config.getCoreDataDir();
+        File coreDataDir = coreConfig.getDataDirFile();
         if(coreDataDir == null) {
             coreDataDir = getDefaultCoreDataDir();
-            Config.get().setCoreDataDir(coreDataDir);
         }
 
-        String coreAuth = config.getCoreAuth();
+        String coreAuth = coreConfig.getAuth();
         if(coreAuth == null) {
             coreAuth = "user:password";
-            Config.get().setCoreAuth(coreAuth);
         }
 
         if(coreAuthType == CoreAuthType.COOKIE || coreAuth.length() < 2) {
@@ -89,11 +87,7 @@ public class BitcoindClient {
         this.blocksIndex = blocksIndex;
         this.mempoolIndex = mempoolIndex;
 
-        Integer cacheSize = Config.get().getScriptPubKeyCacheSize();
-        if(cacheSize == null) {
-            cacheSize = DEFAULT_SCRIPT_PUB_KEY_CACHE_SIZE;
-            Config.get().setScriptPubKeyCacheSize(cacheSize);
-        }
+        int cacheSize = config.getIndex().getCacheSizeEntries();
         this.scriptPubKeyCache = lruCache(cacheSize);
     }
 

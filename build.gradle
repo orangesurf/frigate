@@ -31,6 +31,7 @@ dependencies {
         exclude group: 'org.slf4j'
     }
     implementation('com.fasterxml.jackson.core:jackson-databind:2.21.1')
+    implementation('com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.21.1')
     implementation('org.jcommander:jcommander:3.0')
     implementation ('org.slf4j:slf4j-api:2.0.17')
     testImplementation platform('org.junit:junit-bom:5.14.1')

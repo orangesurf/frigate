@@ -17,15 +17,17 @@ public class ElectrumServerRunnable implements Runnable {
 
     private final BitcoindClient bitcoindClient;
     private final IndexQuerier indexQuerier;
+    private final int port;
 
     protected ServerSocket serverSocket = null;
     protected boolean stopped = false;
     protected Thread runningThread = null;
     protected ExecutorService requestPool = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("ElectrumServerRequest-", 0).factory());
 
-    public ElectrumServerRunnable(BitcoindClient bitcoindClient, IndexQuerier indexQuerier) {
+    public ElectrumServerRunnable(BitcoindClient bitcoindClient, IndexQuerier indexQuerier, int port) {
         this.bitcoindClient = bitcoindClient;
         this.indexQuerier = indexQuerier;
+        this.port = port;
         openServerSocket();
     }
 
@@ -72,7 +74,7 @@ public class ElectrumServerRunnable implements Runnable {
 
     private void openServerSocket() {
         try {
-            serverSocket = new ServerSocket(DEFAULT_PORT);
+            serverSocket = new ServerSocket(port);
         } catch(IOException e) {
             throw new RuntimeException("Cannot open electrum server port", e);
         }
