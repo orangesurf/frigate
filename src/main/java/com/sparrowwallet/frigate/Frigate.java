@@ -8,7 +8,7 @@ import com.sparrowwallet.frigate.electrum.ElectrumServerRunnable;
 import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
 import com.sparrowwallet.frigate.index.Index;
 import com.sparrowwallet.frigate.index.IndexQuerier;
-import com.sparrowwallet.frigate.control.TrayManager;
+import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.frigate.io.Config;
 import com.sparrowwallet.frigate.io.Storage;
 import com.github.arteam.simplejsonrpc.client.exception.JsonRpcException;
@@ -39,7 +39,7 @@ public class Frigate {
 
     private boolean running;
 
-    private static TrayManager trayManager;
+    private static Object trayManager;
 
     public void start() {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
@@ -98,6 +98,14 @@ public class Frigate {
         return LoggerFactory.getLogger(Frigate.class);
     }
 
+    private static void initTray() {
+        if(com.sparrowwallet.frigate.control.TrayManager.isSupported()) {
+            com.sparrowwallet.frigate.control.TrayManager mgr = new com.sparrowwallet.frigate.control.TrayManager();
+            EVENT_BUS.register(mgr);
+            trayManager = mgr;
+        }
+    }
+
     public static void main(String[] argv) {
         Args args = new Args();
         JCommander jCommander = JCommander.newBuilder().addObject(args).programName(SERVER_NAME.toLowerCase(Locale.ROOT)).acceptUnknownOptions(true).build();
@@ -154,9 +162,8 @@ public class Frigate {
         }
 
         try {
-            if(TrayManager.isSupported()) {
-                trayManager = new TrayManager();
-                EVENT_BUS.register(trayManager);
+            if(OsType.getCurrent() == OsType.MACOS) {
+                initTray();
             }
 
             Frigate frigate = new Frigate();
