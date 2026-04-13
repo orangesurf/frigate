@@ -342,47 +342,66 @@ python3 benchmark.py --clients 4
 
 ## Configuration
 
-For indexing Frigate will need access to the Bitcoin Core RPC, which will need to have `txindex=1` configured.
+Frigate stores its configuration in `~/.frigate/config.toml` on macOS and Linux, and `%APPDATA%\Frigate\config.toml` on Windows.
+A default configuration file is created on first startup. For indexing, Frigate needs access to the Bitcoin Core RPC, which requires `txindex=1` in `bitcoin.conf`.
 
-By default Frigate stores all configuration in `~/.frigate/config` on macOS and Linux, and `%APPDATA%/Frigate` on Windows.
-An example configuration looks as follows
-```json
-{
-  "coreServer": "http://127.0.0.1:8332",
-  "coreAuthType": "COOKIE",
-  "coreDataDir": "/home/bitcoin/.bitcoin",
-  "coreAuth": "bitcoin:password",
-  "startIndexing": true,
-  "indexStartHeight": 0,
-  "scriptPubKeyCacheSize": 10000000,
-  "batchSize": 300000,
-  "computeBackend": "AUTO",
-  "backendElectrumServer": "tcp://localhost:50001"
-}
+With Bitcoin Core running on the same machine with default settings, Frigate will connect automatically with no configuration changes required.
+
+```toml
+# Frigate configuration
+
+[core]
+connect = true
+# server = "http://127.0.0.1:8332"
+# authType = "COOKIE"            # COOKIE or USERPASS
+# dataDir = "/home/bitcoin/.bitcoin"
+# auth = "user:password"         # only needed for USERPASS
+
+[index]
+# startHeight = 0                # default: 709632 on mainnet (Taproot activation), 0 on testnet
+# cacheSize = "10M"              # scriptPubKey cache entries (default: 10M, ~4GB RAM)
+
+[scan]
+# batchSize = 300000             # rows per GPU dispatch (reduce if scanning hangs on older GPUs)
+# computeBackend = "AUTO"        # AUTO, GPU, or CPU
+# dbThreads = 4                  # limit DuckDB threads (reduces CPU load when computeBackend = "CPU")
+
+[server]
+# port = 57001
+# backendElectrumServer = "tcp://localhost:50001"
 ```
 
-Default values for these entries will be set on first startup.
-The value of `coreAuthType` can either be `COOKIE` or `USERPASS`. 
-Configure `coreDataDir` or `coreAuth` respectively to grant RPC access.
-The value of `startIndexing` can be set to `false` if an index has already been built and you just want to execute queries against it without connecting to Bitcoin Core.
+### Core
+
+Set `connect = false` to run Frigate without connecting to Bitcoin Core.
+This is useful if an index has already been built and you just want to serve queries against it.
+The `authType` can be `COOKIE` (default) or `USERPASS`.
+For cookie authentication, set `dataDir` to the Bitcoin Core data directory if it is not in the default location.
+For user/password authentication, set `auth` to `user:password`.
+
+### Index
 
 Indexing speed is greatly affected by looking up the scriptPubKeys of spent outputs.
 To improve performance, scriptPubKeys are cached to avoid looking them up again with `getrawtransaction`.
-The `scriptPubKeyCacheSize` limits the number of scriptPubKeys cached during indexing. 
-The default value leads to a total application memory size of around 4Gb. 
-This value can be increased or decreased depending on available RAM. 
+The `cacheSize` limits the number of scriptPubKeys cached during indexing (e.g. `"10M"` for 10 million entries, ~4GB RAM).
+This value can be increased or decreased depending on available RAM.
 
 The DuckDB database is stored in a `db` subfolder in the same directory, in a file called `frigate.duckdb`.
 DuckDB databases can be transferred between different operating systems, and should survive unclean shutdowns.
 
+### Scan
+
 The `computeBackend` setting controls whether scanning uses GPU or CPU. Valid values are `AUTO` (default), `GPU`, and `CPU`.
-In `AUTO` mode, the GPU is used if one is detected, otherwise the CPU is used and a warning is logged.
-Set to `CPU` to force CPU-only scanning and suppress the warning. 
-With CPU-only scanning, to reduce the CPU load set the number of cores made available to DuckDB with `dbThreads`.
-Valid values are any integer equal to or less than number of CPU cores.
+In `AUTO` mode, the GPU is used if one is detected, otherwise the CPU is used.
+Set to `CPU` to force CPU-only scanning.
+With CPU-only scanning, `dbThreads` can be used to limit the number of DuckDB threads and reduce CPU load.
 
 The `batchSize` setting controls how many transactions are processed per GPU dispatch (default: 300,000).
 If scanning hangs or becomes unstable on certain GPUs (particularly older OpenCL-only GPUs), try reducing this value (e.g. 10,000 to 50,000).
+
+### Server
+
+The `port` setting controls the Electrum server listening port (default: 57001).
 
 Frigate currently only implements a selection of Electrum server RPCs directly.
 Any other requests (including address-related lookups) can be proxied to another Electrum server.
