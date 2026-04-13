@@ -74,7 +74,11 @@ jlink {
             (osName == nativePlatform && arch == nativeArch) ? null : "glob:/com.sparrowwallet.frigate/native/${osName}/${arch}/**"
         }
     } + ['glob:/com.sparrowwallet.merged.module/META-INF/*']).join(',')
-    options = ['--strip-native-commands', '--strip-java-debug-attributes', '--compress', 'zip-6', '--no-header-files', '--no-man-pages', '--ignore-signing-information', '--exclude-files', '**.png', '--exclude-resources', excludeGlobs]
+    def jlinkOptions = ['--strip-native-commands', '--strip-java-debug-attributes', '--compress', 'zip-6', '--no-header-files', '--no-man-pages', '--ignore-signing-information', '--exclude-files', '**.png', '--exclude-resources', excludeGlobs]
+    if(os.isMacOsX()) {
+        jlinkOptions += ['--add-modules', 'java.desktop']
+    }
+    options = jlinkOptions
     launcher {
         name = 'frigate'
         jvmArgs = ["--enable-native-access=duckdb.jdbc,com.sparrowwallet.drongo"]

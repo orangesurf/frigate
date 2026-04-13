@@ -12,7 +12,7 @@ module com.sparrowwallet.frigate {
     requires org.jcommander;
     requires org.slf4j;
     requires java.sql;
-    requires java.desktop;
+    requires static java.desktop;
     exports com.sparrowwallet.frigate;
     exports com.sparrowwallet.frigate.control;
     exports com.sparrowwallet.frigate.io;
