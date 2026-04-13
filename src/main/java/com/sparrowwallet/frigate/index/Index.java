@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
+import java.math.BigInteger;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -35,13 +36,29 @@ public class Index {
     private static final String TWEAK_TABLE = "tweak";
     public static final int HISTORY_PAGE_SIZE = 100;
 
+    private static final String AUDIT_SCAN_KEY_ENV = "FRIGATE_AUDIT_SCAN_KEY";
+    private static final String AUDIT_SPEND_KEY_ENV = "FRIGATE_AUDIT_SPEND_KEY";
+
     private final DbManager dbManager;
     private volatile int lastBlockIndexed = -1;
     private final int batchSize;
+    private final ECKey auditScanKey;
+    private final ECKey auditSpendKey;
 
     public Index(int startHeight, boolean inMemory, int batchSize) {
         lastBlockIndexed = Math.max(lastBlockIndexed, startHeight - 1);
         this.batchSize = batchSize;
+
+        String scanKeyHex = System.getenv(AUDIT_SCAN_KEY_ENV);
+        String spendKeyHex = System.getenv(AUDIT_SPEND_KEY_ENV);
+        if(scanKeyHex != null && spendKeyHex != null) {
+            this.auditScanKey = ECKey.fromPrivate(Utils.hexToBytes(scanKeyHex));
+            this.auditSpendKey = ECKey.fromPublicOnly(Utils.hexToBytes(spendKeyHex));
+            log.warn("Scan audit mode enabled — output prefixes will be computed for the provided wallet keys");
+        } else {
+            this.auditScanKey = null;
+            this.auditSpendKey = null;
+        }
 
         if(inMemory) {
             dbManager = new MemoryDbManager();
@@ -156,12 +173,17 @@ public class Index {
                         appender.append(blkTx.getHeight());
                         appender.append(transactions.get(blkTx));
 
-                        List<TransactionOutput> outputs = blkTx.getTransaction().getOutputs();
                         List<Long> hashPrefixes = new ArrayList<>();
-                        for(TransactionOutput output : outputs) {
-                            if(ScriptType.P2TR.isScriptType(output.getScript())) {
-                                long hashPrefix = getHashPrefix(ScriptType.P2TR.getPublicKeyFromScript(output.getScript()).getPubKey(), 1);
-                                hashPrefixes.add(hashPrefix);
+                        if(auditScanKey != null) {
+                            long hashPrefix = getAuditHashPrefix(transactions, blkTx);
+                            hashPrefixes.add(hashPrefix);
+                        } else {
+                            List<TransactionOutput> outputs = blkTx.getTransaction().getOutputs();
+                            for(TransactionOutput output : outputs) {
+                                if(ScriptType.P2TR.isScriptType(output.getScript())) {
+                                    long hashPrefix = getHashPrefix(ScriptType.P2TR.getPublicKeyFromScript(output.getScript()).getPubKey(), 1);
+                                    hashPrefixes.add(hashPrefix);
+                                }
                             }
                         }
                         appender.append(hashPrefixes.stream().mapToLong(Long::longValue).toArray());
@@ -188,6 +210,18 @@ public class Index {
         } catch(Exception e) {
             log.error("Error adding to index", e);
         }
+    }
+
+    private long getAuditHashPrefix(Map<BlockTransaction, byte[]> transactions, BlockTransaction blkTx) {
+        byte[] tweakKeyBytes = transactions.get(blkTx);
+        ECKey tweakKey = ECKey.fromPublicOnly(compressRawKey(tweakKeyBytes));
+        ECKey sharedSecret = tweakKey.multiply(auditScanKey.getPrivKey(), true);
+        byte[] ser37 = new byte[37];
+        System.arraycopy(sharedSecret.getPubKey(true), 0, ser37, 0, 33);
+        byte[] t_k = Utils.taggedHash("BIP0352/SharedSecret", ser37);
+        ECKey tkG = ECKey.fromPublicOnly(ECKey.publicKeyFromPrivate(new BigInteger(1, t_k), true));
+        ECKey P0 = auditSpendKey.add(tkG, true);
+        return getHashPrefix(P0.getPubKeyXCoord(), 0);
     }
 
     public void removeFromIndex(int startHeight) {

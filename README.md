@@ -489,6 +489,27 @@ clinfo | grep "Device Name"
 
 You should see your Intel GPU listed (e.g. `Intel(R) UHD Graphics [0x7d67]`).
 
+## Scan Audit Mode
+
+Frigate includes a correctness testing mode to verify the database extension will find all outputs for a given wallet.
+In normal operation, the tweak index stores the hash prefixes derived from the taproot output public keys of each eligible transaction.
+In audit mode, the index instead stores the hash prefix of the expected change output key (P<sub>0</sub> = B<sub>spend</sub> + t<sub>0</sub>·G) computed from the provided wallet keys.
+This treats every silent payments eligible transaction as paying to the provided wallet.
+The audit can then be run with the following query:
+```sql
+SELECT (SELECT COUNT(*) FROM tweak) AS total_rows, COUNT(*) AS matched_rows FROM ufsecp_scan((SELECT txid, height, tweak_key, outputs FROM tweak), from_hex('<scan_private_key_little_endian>'), from_hex('<spend_public_key_little_endian_x_y>'), [from_hex('<change_label_key_little_endian_x_y>')]); 
+```
+
+This mode is activated by setting two environment variables before starting Frigate:
+
+```shell
+export FRIGATE_AUDIT_SCAN_KEY=<scan_private_key_hex>
+export FRIGATE_AUDIT_SPEND_KEY=<spend_public_key_hex>
+```
+
+When both variables are set, a warning is logged on startup confirming audit mode is active.
+The index must be rebuilt from scratch when switching between normal and audit modes.
+
 ## Building
 
 To clone this project, use
