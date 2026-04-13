@@ -48,6 +48,9 @@ application {
 
     applicationDefaultJvmArgs = ["-XX:+HeapDumpOnOutOfMemoryError",
                                  "--enable-native-access=duckdb.jdbc,com.sparrowwallet.drongo"]
+    if(os.isMacOsX()) {
+        applicationDefaultJvmArgs += ["-Dapple.awt.UIElement=true"]
+    }
 }
 
 tasks.register('runCli', JavaExec) {
@@ -89,7 +92,7 @@ jlink {
         if(os.isWindows()) {
             imageOptions = ['--win-console', '--resource-dir', 'src/main/deploy/package/windows/']
         } else if(os.isMacOsX()) {
-            imageOptions = ['--icon', 'src/main/deploy/package/macos/frigate.icns', '--resource-dir', 'src/main/deploy/package/macos/']
+            imageOptions = ['--icon', 'src/main/deploy/package/macos/frigate.icns', '--resource-dir', 'src/main/deploy/package/macos/', '--java-options', '-Dapple.awt.UIElement=true']
         } else if(os.isLinux()) {
             imageOptions = ['--resource-dir', 'src/main/deploy/package/linux/', '--icon', 'src/main/deploy/package/linux/frigate.png']
             installerOptions = ['--linux-rpm-license-type', 'ASL 2.0', '--linux-deb-maintainer', 'mail@sparrowwallet.com']

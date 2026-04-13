@@ -26,7 +26,6 @@ import java.util.concurrent.locks.ReentrantLock;
 public class BitcoindClient {
     private static final Logger log = LoggerFactory.getLogger(BitcoindClient.class);
 
-    public static final int DEFAULT_SCRIPT_PUB_KEY_CACHE_SIZE = 10000000;
     private static final int MAX_REORG_DEPTH = 10;
     public static final int MIN_SUBMIT_PACKAGE_VERSION = 280000;
 
@@ -124,9 +123,11 @@ public class BitcoindClient {
         }
 
         lastBlock = blockchainInfo.bestblockhash();
+        Frigate.getEventBus().post(tip);
         log.info("Initializing indexes...");
         updateBlocksIndex();
         updateMempoolIndex();
+        Frigate.getEventBus().post(tip);
     }
 
     private synchronized void updateBlocksIndex() {

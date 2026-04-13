@@ -8,6 +8,7 @@ import com.sparrowwallet.frigate.electrum.ElectrumServerRunnable;
 import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
 import com.sparrowwallet.frigate.index.Index;
 import com.sparrowwallet.frigate.index.IndexQuerier;
+import com.sparrowwallet.frigate.control.TrayManager;
 import com.sparrowwallet.frigate.io.Config;
 import com.sparrowwallet.frigate.io.Storage;
 import com.github.arteam.simplejsonrpc.client.exception.JsonRpcException;
@@ -37,6 +38,8 @@ public class Frigate {
     private ElectrumServerRunnable electrumServer;
 
     private boolean running;
+
+    private static TrayManager trayManager;
 
     public void start() {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
@@ -151,6 +154,11 @@ public class Frigate {
         }
 
         try {
+            if(TrayManager.isSupported()) {
+                trayManager = new TrayManager();
+                EVENT_BUS.register(trayManager);
+            }
+
             Frigate frigate = new Frigate();
             frigate.start();
         } catch(Exception e) {
