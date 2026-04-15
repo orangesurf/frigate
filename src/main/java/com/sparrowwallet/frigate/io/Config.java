@@ -374,7 +374,12 @@ public class Config {
 
         public void setLastIndexedBlockHeight(Integer lastIndexedBlockHeight) {
             this.lastIndexedBlockHeight = lastIndexedBlockHeight;
-            Config.get().flush();
+            // Skip flush during initial deserialization — Config.INSTANCE is null
+            // while Jackson is still building the Config object, and calling
+            // Config.get() here would re-enter load() and stack-overflow.
+            if(Config.INSTANCE != null) {
+                Config.INSTANCE.flush();
+            }
         }
     }
 
