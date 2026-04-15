@@ -5,6 +5,7 @@ import com.google.common.eventbus.EventBus;
 import com.sparrowwallet.drongo.Drongo;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.frigate.electrum.ElectrumServerRunnable;
+import com.sparrowwallet.frigate.http.HttpApiServer;
 import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
 import com.sparrowwallet.frigate.bitcoind.UtxoBootstrap;
 import com.sparrowwallet.frigate.index.Index;
@@ -33,6 +34,7 @@ public class Frigate {
     private Index mempoolIndex;
     private BitcoindClient bitcoindClient;
     private ElectrumServerRunnable electrumServer;
+    private HttpApiServer httpApiServer;
 
     private boolean running;
 
@@ -105,6 +107,9 @@ public class Frigate {
         electrumServerThread.setDaemon(false);
         electrumServerThread.start();
 
+        httpApiServer = new HttpApiServer(blocksIndex);
+        httpApiServer.start();
+
         running = true;
     }
 
@@ -124,6 +129,9 @@ public class Frigate {
         }
         if(electrumServer != null) {
             electrumServer.stop();
+        }
+        if(httpApiServer != null) {
+            httpApiServer.stop();
         }
 
         running = false;

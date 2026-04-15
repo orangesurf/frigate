@@ -67,7 +67,7 @@ public class Index {
             dbManager.executeWrite(connection -> {
                 try(Statement stmt = connection.createStatement()) {
                     if(indexMode == IndexMode.UTXO_ONLY) {
-                        return stmt.execute("CREATE TABLE IF NOT EXISTS " + UTXO_TABLE + " (txid BLOB NOT NULL, output_index INTEGER NOT NULL, height INTEGER NOT NULL, tweak_key BLOB NOT NULL, output_hash_prefix BIGINT NOT NULL, PRIMARY KEY (txid, output_index))");
+                        return stmt.execute("CREATE TABLE IF NOT EXISTS " + UTXO_TABLE + " (txid BLOB NOT NULL, output_index INTEGER NOT NULL, height INTEGER NOT NULL, tweak_key BLOB NOT NULL, compressed_tweak_key BLOB NOT NULL, output_hash_prefix BIGINT NOT NULL, value BIGINT NOT NULL, PRIMARY KEY (txid, output_index))");
                     } else {
                         return stmt.execute("CREATE TABLE IF NOT EXISTS " + TWEAK_TABLE + " (txid BLOB NOT NULL, height INTEGER NOT NULL, tweak_key BLOB NOT NULL, outputs BIGINT[])");
                     }
@@ -80,6 +80,10 @@ public class Index {
 
     public IndexMode getIndexMode() {
         return indexMode;
+    }
+
+    public <T> T executeRead(DbManager.ReadOperation<T> operation) throws SQLException, InterruptedException {
+        return dbManager.executeRead(operation);
     }
 
     public void close() {
@@ -190,8 +194,10 @@ public class Index {
                                 appender.append(i);
                                 appender.append(blkTx.getHeight());
                                 appender.append(tweakKey);
+                                appender.append(compressRawKey(tweakKey));
                                 long hashPrefix = getHashPrefix(ScriptType.P2TR.getPublicKeyFromScript(output.getScript()).getPubKey(), 1);
                                 appender.append(hashPrefix);
+                                appender.append(output.getValue());
                                 appender.endRow();
                                 utxoCount++;
                             }
@@ -363,12 +369,15 @@ public class Index {
                         ResultSet resultSet = statement.executeQuery();
                         while(resultSet.next()) {
                             byte[] txid = resultSet.getBytes(1);
-                            byte[] tweak_key = compressRawKey(resultSet.getBytes(2));
-                            int height = resultSet.getInt(3);
+                            int height;
                             if(indexMode == IndexMode.UTXO_ONLY) {
+                                byte[] compressed_tweak_key = resultSet.getBytes(2);
+                                height = resultSet.getInt(3);
                                 int outputIndex = resultSet.getInt(4);
-                                queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid), Utils.bytesToHex(tweak_key), outputIndex));
+                                queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid), Utils.bytesToHex(compressed_tweak_key), outputIndex));
                             } else {
+                                byte[] tweak_key = compressRawKey(resultSet.getBytes(2));
+                                height = resultSet.getInt(3);
                                 queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid), Utils.bytesToHex(tweak_key)));
                             }
                         }
@@ -406,7 +415,7 @@ public class Index {
         String labelsStr = "[" + String.join(", ", Collections.nCopies(subscription.labels().length, "?")) + "]";
 
         if(indexMode == IndexMode.UTXO_ONLY) {
-            String sql = "SELECT txid, tweak_key, height, output_index FROM " + UTXO_TABLE +
+            String sql = "SELECT txid, compressed_tweak_key, height, output_index FROM " + UTXO_TABLE +
                     " WHERE scan_silent_payments([output_hash_prefix], [?, ?, tweak_key], " + labelsStr + ")";
 
             if(startHeight != null) {
