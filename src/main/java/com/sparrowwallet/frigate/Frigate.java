@@ -5,8 +5,11 @@ import com.google.common.eventbus.EventBus;
 import com.sparrowwallet.drongo.Drongo;
 import com.sparrowwallet.drongo.Network;
 import com.sparrowwallet.frigate.electrum.ElectrumServerRunnable;
+import com.sparrowwallet.frigate.http.HttpApiServer;
 import com.sparrowwallet.frigate.bitcoind.BitcoindClient;
+import com.sparrowwallet.frigate.bitcoind.UtxoBootstrap;
 import com.sparrowwallet.frigate.index.Index;
+import com.sparrowwallet.frigate.index.IndexMode;
 import com.sparrowwallet.frigate.index.IndexQuerier;
 import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.frigate.io.Config;
@@ -32,14 +35,24 @@ public class Frigate {
 
     private static final EventBus EVENT_BUS = new EventBus();
 
+    private final Args args;
     private Index blocksIndex;
     private Index mempoolIndex;
     private BitcoindClient bitcoindClient;
     private ElectrumServerRunnable electrumServer;
+    private HttpApiServer httpApiServer;
 
     private boolean running;
 
     private static Object trayManager;
+
+    public Frigate() {
+        this(new Args());
+    }
+
+    public Frigate(Args args) {
+        this.args = args;
+    }
 
     public void start() {
         Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
@@ -52,9 +65,38 @@ public class Frigate {
         }
 
         int batchSize = config.getScan().getBatchSize();
+        IndexMode indexMode = config.getIndex().getMode();
 
-        blocksIndex = new Index(startHeight, false, batchSize);
-        mempoolIndex = new Index(0, true, batchSize);
+        getLogger().info("Using index mode: " + indexMode);
+
+        // Handle bootstrap mode
+        if(args.bootstrap) {
+            if(indexMode != IndexMode.UTXO_ONLY) {
+                getLogger().error("Bootstrap mode requires UTXO_ONLY index mode. Current mode: " + indexMode);
+                getLogger().error("Set mode = \"UTXO_ONLY\" under [index] in config.toml and try again.");
+                System.exit(1);
+            }
+
+            getLogger().info("Running in bootstrap mode...");
+
+            blocksIndex = new Index(startHeight, false, batchSize, indexMode);
+            BitcoindClient tempClient = new BitcoindClient(blocksIndex, null);
+
+            UtxoBootstrap bootstrap = new UtxoBootstrap(
+                    tempClient.getBitcoindService(),
+                    blocksIndex,
+                    config.getIndex().getUtxoMinValue()
+            );
+            bootstrap.run();
+
+            getLogger().info("Bootstrap complete. Exiting.");
+            blocksIndex.close();
+            blocksIndex = null;
+            System.exit(0);
+        }
+
+        blocksIndex = new Index(startHeight, false, batchSize, indexMode);
+        mempoolIndex = new Index(0, true, batchSize, indexMode);
 
         if(config.getCore().shouldConnect()) {
             bitcoindClient = new BitcoindClient(blocksIndex, mempoolIndex);
@@ -65,6 +107,9 @@ public class Frigate {
         Thread electrumServerThread = new Thread(electrumServer, "Frigate Electrum Server");
         electrumServerThread.setDaemon(false);
         electrumServerThread.start();
+
+        httpApiServer = new HttpApiServer(blocksIndex);
+        httpApiServer.start();
 
         running = true;
     }
@@ -85,6 +130,9 @@ public class Frigate {
         }
         if(electrumServer != null) {
             electrumServer.stop();
+        }
+        if(httpApiServer != null) {
+            httpApiServer.stop();
         }
 
         running = false;
@@ -166,7 +214,7 @@ public class Frigate {
                 initTray();
             }
 
-            Frigate frigate = new Frigate();
+            Frigate frigate = new Frigate(args);
             frigate.start();
         } catch(Exception e) {
             String message = getOperationalErrorMessage(e);

@@ -23,6 +23,9 @@ public class Args {
     @Parameter(names = { "--help", "-h" }, description = "Show usage", help = true)
     public boolean help;
 
+    @Parameter(names = { "--bootstrap" }, description = "Bootstrap UTXO index from current chainstate (requires UTXO_ONLY mode and txindex=1)")
+    public boolean bootstrap;
+
     public List<String> toParams() {
         List<String> params = new ArrayList<>();
 

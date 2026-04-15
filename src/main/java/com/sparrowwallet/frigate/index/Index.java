@@ -34,6 +34,7 @@ public class Index {
     private static final Logger log = LoggerFactory.getLogger(Index.class);
     public static final String DEFAULT_DB_FILENAME = "frigate.duckdb";
     private static final String TWEAK_TABLE = "tweak";
+    private static final String UTXO_TABLE = "utxo";
     public static final int HISTORY_PAGE_SIZE = 100;
 
     private static final String AUDIT_SCAN_KEY_ENV = "FRIGATE_AUDIT_SCAN_KEY";
@@ -42,12 +43,14 @@ public class Index {
     private final DbManager dbManager;
     private volatile int lastBlockIndexed = -1;
     private final int batchSize;
+    private final IndexMode indexMode;
     private final ECKey auditScanKey;
     private final ECKey auditSpendKey;
 
-    public Index(int startHeight, boolean inMemory, int batchSize) {
+    public Index(int startHeight, boolean inMemory, int batchSize, IndexMode indexMode) {
         lastBlockIndexed = Math.max(lastBlockIndexed, startHeight - 1);
         this.batchSize = batchSize;
+        this.indexMode = indexMode;
 
         String scanKeyHex = System.getenv(AUDIT_SCAN_KEY_ENV);
         String spendKeyHex = System.getenv(AUDIT_SPEND_KEY_ENV);
@@ -78,7 +81,11 @@ public class Index {
         try {
             dbManager.executeWrite(connection -> {
                 try(Statement stmt = connection.createStatement()) {
-                    return stmt.execute("CREATE TABLE IF NOT EXISTS " + TWEAK_TABLE + " (txid BLOB NOT NULL, height INTEGER NOT NULL, tweak_key BLOB NOT NULL, outputs BIGINT[])");
+                    if(indexMode == IndexMode.UTXO_ONLY) {
+                        return stmt.execute("CREATE TABLE IF NOT EXISTS " + UTXO_TABLE + " (txid BLOB NOT NULL, output_index INTEGER NOT NULL, height INTEGER NOT NULL, tweak_key BLOB NOT NULL, compressed_tweak_key BLOB NOT NULL, output_hash_prefix BIGINT NOT NULL, value BIGINT NOT NULL, PRIMARY KEY (txid, output_index))");
+                    } else {
+                        return stmt.execute("CREATE TABLE IF NOT EXISTS " + TWEAK_TABLE + " (txid BLOB NOT NULL, height INTEGER NOT NULL, tweak_key BLOB NOT NULL, outputs BIGINT[])");
+                    }
                 }
             });
         } catch(Exception e) {
@@ -137,11 +144,32 @@ public class Index {
         }
     }
 
+    public IndexMode getIndexMode() {
+        return indexMode;
+    }
+
+    public <T> T executeRead(DbManager.ReadOperation<T> operation) throws SQLException, InterruptedException {
+        return dbManager.executeRead(operation);
+    }
+
     public void close() {
         dbManager.close();
     }
 
     public int getLastBlockIndexed() {
+        // Check persisted height from Config (set by bootstrap or previous indexing)
+        Integer configHeight = Config.get().getIndex().getLastIndexedBlockHeight();
+        if (configHeight != null && configHeight > lastBlockIndexed) {
+            lastBlockIndexed = configHeight;
+        }
+
+        // For UTXO_ONLY mode, Config is authoritative
+        // (MAX(height) in UTXO table is creation height, not the height we've indexed up to)
+        if (indexMode == IndexMode.UTXO_ONLY) {
+            return lastBlockIndexed;
+        }
+
+        // For FULL mode, also check database MAX(height)
         try {
             return dbManager.executeRead(connection -> {
                 try(PreparedStatement statement = connection.prepareStatement("SELECT MAX(height) from " + TWEAK_TABLE)) {
@@ -224,14 +252,109 @@ public class Index {
         return getHashPrefix(P0.getPubKeyXCoord(), 0);
     }
 
+    public void addUtxosToIndex(Map<BlockTransaction, byte[]> transactions, long minValue) {
+        if(dbManager.isShutdown()) {
+            return;
+        }
+
+        int fromBlockHeight = lastBlockIndexed;
+        try {
+            lastBlockIndexed = dbManager.executeWrite(connection -> {
+                DuckDBConnection duckDBConnection = (DuckDBConnection)connection;
+                try(DuckDBAppender appender = duckDBConnection.createAppender(DuckDBConnection.DEFAULT_SCHEMA, UTXO_TABLE)) {
+                    int blockHeight = -1;
+                    int utxoCount = 0;
+
+                    for(BlockTransaction blkTx : transactions.keySet()) {
+                        byte[] tweakKey = transactions.get(blkTx);
+                        List<TransactionOutput> outputs = blkTx.getTransaction().getOutputs();
+
+                        for(int i = 0; i < outputs.size(); i++) {
+                            TransactionOutput output = outputs.get(i);
+                            if(ScriptType.P2TR.isScriptType(output.getScript()) && output.getValue() >= minValue) {
+                                appender.beginRow();
+                                appender.append(blkTx.getTransaction().getTxId().getBytes());
+                                appender.append(i);
+                                appender.append(blkTx.getHeight());
+                                appender.append(tweakKey);
+                                appender.append(compressRawKey(tweakKey));
+                                long hashPrefix = getHashPrefix(ScriptType.P2TR.getPublicKeyFromScript(output.getScript()).getPubKey(), 1);
+                                appender.append(hashPrefix);
+                                appender.append(output.getValue());
+                                appender.endRow();
+                                utxoCount++;
+                            }
+                        }
+
+                        blockHeight = Math.max(blockHeight, blkTx.getHeight());
+                    }
+
+                    if(blockHeight <= 0 && lastBlockIndexed < 0) {
+                        log.info("Indexed " + utxoCount + " UTXOs from " + transactions.size() + " mempool transactions");
+                    } else if(blockHeight > 0) {
+                        log.info("Indexed " + utxoCount + " UTXOs from " + transactions.size() + " transactions to block height " + blockHeight);
+                    }
+
+                    return blockHeight;
+                }
+            });
+
+            if(lastBlockIndexed <= 0) {
+                Frigate.getEventBus().post(new SilentPaymentsMempoolIndexAdded(transactions.keySet().stream().map(blkTx -> blkTx.getTransaction().getTxId()).collect(Collectors.toSet())));
+            } else {
+                Frigate.getEventBus().post(new SilentPaymentsBlocksIndexUpdate(fromBlockHeight + 1, lastBlockIndexed, transactions.size()));
+
+                // Persist the indexed height to Config for UTXO_ONLY mode
+                Integer currentConfig = Config.get().getIndex().getLastIndexedBlockHeight();
+                if(currentConfig == null || lastBlockIndexed > currentConfig) {
+                    Config.get().getIndex().setLastIndexedBlockHeight(lastBlockIndexed);
+                }
+            }
+        } catch(Exception e) {
+            log.error("Error adding UTXOs to index", e);
+        }
+    }
+
+    public void removeSpentUtxos(Set<HashIndex> spentOutpoints) {
+        if(dbManager.isShutdown() || spentOutpoints.isEmpty()) {
+            return;
+        }
+
+        try {
+            int removed = dbManager.executeWrite(connection -> {
+                try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + UTXO_TABLE + " WHERE txid = ? AND output_index = ?")) {
+                    for(HashIndex outpoint : spentOutpoints) {
+                        statement.setBytes(1, outpoint.getHash().getBytes());
+                        statement.setInt(2, (int) outpoint.getIndex());
+                        statement.addBatch();
+                    }
+
+                    int[] results = statement.executeBatch();
+                    int count = 0;
+                    for(int r : results) {
+                        if(r > 0) count += r;
+                    }
+                    return count;
+                }
+            });
+
+            if(removed > 0) {
+                log.debug("Removed " + removed + " spent UTXOs from index");
+            }
+        } catch(Exception e) {
+            log.error("Error removing spent UTXOs from index", e);
+        }
+    }
+
     public void removeFromIndex(int startHeight) {
         if(dbManager.isShutdown()) {
             return;
         }
 
+        String table = (indexMode == IndexMode.UTXO_ONLY) ? UTXO_TABLE : TWEAK_TABLE;
         try {
             dbManager.executeWrite(connection -> {
-                try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + TWEAK_TABLE + " WHERE height >= ?")) {
+                try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE height >= ?")) {
                     statement.setInt(1, startHeight);
                     return statement.execute();
                 }
@@ -246,9 +369,10 @@ public class Index {
             return;
         }
 
+        String table = (indexMode == IndexMode.UTXO_ONLY) ? UTXO_TABLE : TWEAK_TABLE;
         try {
             dbManager.executeWrite(connection -> {
-                try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + TWEAK_TABLE + " WHERE txid = ?")) {
+                try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE txid = ?")) {
                     for(Sha256Hash txId : txIds) {
                         statement.setBytes(1, txId.getBytes());
                         statement.addBatch();
@@ -317,9 +441,17 @@ public class Index {
                         ResultSet resultSet = statement.executeQuery();
                         while(resultSet.next()) {
                             byte[] txid = resultSet.getBytes(1);
-                            byte[] tweak_key = compressRawKey(resultSet.getBytes(2));
-                            int height = resultSet.getInt(3);
-                            queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid), Utils.bytesToHex(tweak_key)));
+                            int height;
+                            if(indexMode == IndexMode.UTXO_ONLY) {
+                                byte[] compressed_tweak_key = resultSet.getBytes(2);
+                                height = resultSet.getInt(3);
+                                int outputIndex = resultSet.getInt(4);
+                                queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid), Utils.bytesToHex(compressed_tweak_key), outputIndex));
+                            } else {
+                                byte[] tweak_key = compressRawKey(resultSet.getBytes(2));
+                                height = resultSet.getInt(3);
+                                queue.offer(new TxEntry(height, 0, Utils.bytesToHex(txid), Utils.bytesToHex(tweak_key)));
+                            }
                         }
                     }
                 }
@@ -354,6 +486,21 @@ public class Index {
     private String getSql(SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight) {
         String labelsStr = "[" + String.join(", ", Collections.nCopies(subscription.labels().length, "?")) + "]";
 
+        if(indexMode == IndexMode.UTXO_ONLY) {
+            String sql = "SELECT txid, compressed_tweak_key, height, output_index FROM " + UTXO_TABLE +
+                    " WHERE scan_silent_payments([output_hash_prefix], [?, ?, tweak_key], " + labelsStr + ")";
+
+            if(startHeight != null) {
+                sql += " AND height >= ?";
+            }
+            if(endHeight != null) {
+                sql += " AND height <= ?";
+            }
+
+            sql += " ORDER BY height";
+            return sql;
+        }
+
         String sql = "SELECT txid, tweak_key, height FROM ufsecp_scan((SELECT txid, height, tweak_key, outputs FROM " + TWEAK_TABLE;
 
         if(startHeight != null || endHeight != null) {
@@ -385,6 +532,21 @@ public class Index {
 
     private void bindParameters(DuckDBPreparedStatement statement, SilentPaymentScanAddress scanAddress, SilentPaymentsSubscription subscription, Integer startHeight, Integer endHeight) throws SQLException {
         int index = 1;
+        if(indexMode == IndexMode.UTXO_ONLY) {
+            statement.setBytes(index++, scanAddress.getScanKey().getPrivKeyBytes());
+            statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getSpendKey()));
+            for(Integer label : subscription.labels()) {
+                statement.setBytes(index++, SilentPaymentUtils.getSecp256k1PubKey(scanAddress.getLabelledTweakKey(label)));
+            }
+            if(startHeight != null) {
+                statement.setInt(index++, startHeight);
+            }
+            if(endHeight != null) {
+                statement.setInt(index, endHeight);
+            }
+            return;
+        }
+
         if(startHeight != null) {
             statement.setInt(index++, startHeight);
         }

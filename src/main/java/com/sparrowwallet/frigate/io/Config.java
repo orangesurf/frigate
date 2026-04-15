@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.toml.TomlMapper;
+import com.sparrowwallet.frigate.index.IndexMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -114,6 +115,19 @@ public class Config {
             int oldSize = root.get("scriptPubKeyCacheSize").asInt();
             config.getIndex().setCacheSize(formatCacheSize(oldSize));
         }
+        if(root.has("indexMode")) {
+            try {
+                config.getIndex().setMode(IndexMode.valueOf(root.get("indexMode").asText()));
+            } catch(IllegalArgumentException e) {
+                log.warn("Unknown indexMode in legacy JSON config: " + root.get("indexMode").asText());
+            }
+        }
+        if(root.has("utxoMinValue")) {
+            config.getIndex().setUtxoMinValue(root.get("utxoMinValue").asLong());
+        }
+        if(root.has("lastIndexedBlockHeight")) {
+            config.getIndex().lastIndexedBlockHeight = root.get("lastIndexedBlockHeight").asInt();
+        }
 
         if(root.has("batchSize")) {
             config.getScan().setBatchSize(root.get("batchSize").asInt());
@@ -190,6 +204,10 @@ public class Config {
             INSTANCE = load();
         }
         return INSTANCE;
+    }
+
+    public synchronized void flush() {
+        saveToml(this, getTomlConfigFile());
     }
 
     public CoreConfig getCore() {
@@ -309,6 +327,9 @@ public class Config {
     public static class IndexConfig {
         private Integer startHeight;
         private String cacheSize;
+        private IndexMode mode;
+        private Long utxoMinValue;
+        private Integer lastIndexedBlockHeight;
 
         public Integer getStartHeight() {
             return startHeight;
@@ -329,6 +350,31 @@ public class Config {
         @JsonIgnore
         public int getCacheSizeEntries() {
             return Config.parseCacheSize(cacheSize);
+        }
+
+        public IndexMode getMode() {
+            return mode == null ? IndexMode.FULL : mode;
+        }
+
+        public void setMode(IndexMode mode) {
+            this.mode = mode;
+        }
+
+        public long getUtxoMinValue() {
+            return utxoMinValue == null ? 1000L : utxoMinValue;
+        }
+
+        public void setUtxoMinValue(Long utxoMinValue) {
+            this.utxoMinValue = utxoMinValue;
+        }
+
+        public Integer getLastIndexedBlockHeight() {
+            return lastIndexedBlockHeight;
+        }
+
+        public void setLastIndexedBlockHeight(Integer lastIndexedBlockHeight) {
+            this.lastIndexedBlockHeight = lastIndexedBlockHeight;
+            Config.get().flush();
         }
     }
 

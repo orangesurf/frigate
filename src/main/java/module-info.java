@@ -13,12 +13,14 @@ module com.sparrowwallet.frigate {
     requires org.slf4j;
     requires java.sql;
     requires static java.desktop;
+    requires jdk.httpserver;
     exports com.sparrowwallet.frigate;
     exports com.sparrowwallet.frigate.io;
     exports com.sparrowwallet.frigate.bitcoind;
     exports com.sparrowwallet.frigate.electrum;
     exports com.sparrowwallet.frigate.index;
     exports com.sparrowwallet.frigate.cli;
+    exports com.sparrowwallet.frigate.http;
     opens com.sparrowwallet.frigate.control to com.google.common;
     opens com.sparrowwallet.frigate.io to com.fasterxml.jackson.databind;
 }

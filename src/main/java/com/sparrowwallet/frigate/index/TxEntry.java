@@ -12,6 +12,7 @@ public class TxEntry implements Comparable<TxEntry> {
     public String tx_hash;
     public String tweak_key;
     public Long fee;
+    public Integer output_index;
 
     public TxEntry() {
     }
@@ -38,6 +39,15 @@ public class TxEntry implements Comparable<TxEntry> {
         this.tx_hash = tx_hash;
         this.tweak_key = null;
         this.fee = btcFee > 0.0 ? (long)(btcFee * Transaction.SATOSHIS_PER_BITCOIN) : null;
+    }
+
+    public TxEntry(int height, int index, String tx_hash, String tweak_key, Integer output_index) {
+        this.height = height;
+        this.index = index;
+        this.tx_hash = tx_hash;
+        this.tweak_key = tweak_key;
+        this.fee = null;
+        this.output_index = output_index;
     }
 
     public int getHeight() {

@@ -8,6 +8,7 @@ import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcParam;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcService;
 import com.sparrowwallet.drongo.protocol.Sha256Hash;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -64,5 +65,11 @@ public interface BitcoindClientService {
 
     @JsonRpcMethod("submitpackage")
     PackageResult submitPackage(@JsonRpcParam("package") String[] rawTxes, @JsonRpcParam("maxfeerate") @JsonRpcOptional Double maxFeeRate, @JsonRpcParam("maxburnamount") @JsonRpcOptional Double maxBurnAmount);
+
+    @JsonRpcMethod("scantxoutset")
+    ScanTxOutSetResult scanTxOutSet(@JsonRpcParam("action") String action, @JsonRpcParam("scanobjects") List<String> scanObjects);
+
+    @JsonRpcMethod("dumptxoutset")
+    DumpTxOutSetResult dumpTxOutSet(@JsonRpcParam("path") String path, @JsonRpcParam("type") @JsonRpcOptional String type);
 }
 
